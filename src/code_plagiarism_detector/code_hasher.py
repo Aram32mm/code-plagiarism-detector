@@ -384,20 +384,36 @@ class CodeHasher:
         
         return self.hash_code(code, language)
     
-    def compare(self, hash1: np.ndarray, hash2: np.ndarray) -> Tuple[float, int]:
+    def compare_syntactic(self, hash1: np.ndarray, hash2: np.ndarray) -> Tuple[float, int]:
         """
-        Compare two hashes using Hamming distance.
+        Compare two code hashes based on syntactic similarity.
         
-        Best for: Same-language comparisons with full feature sets.
+        Focuses on SYNTACTIC similarity by comparing perceptual hashes using
+        Hamming distance. Captures code structure, formatting patterns, and
+        language-specific idioms.
+        
+        Best for:
+        - Same-language comparisons
+        - Fast database lookups
+        - Detecting renamed variables
+        - Syntactic copying detection
+        - Scalable to large codebases
         
         Args:
-            hash1: First hash
-            hash2: Second hash
+            hash1: First 256-bit hash
+            hash2: Second 256-bit hash
             
         Returns:
             Tuple of (similarity_score, hamming_distance)
             - similarity_score: 0.0 to 1.0 (1.0 = identical)
             - hamming_distance: Number of differing bits (0-256)
+            
+        Example:
+            >>> # Fast syntactic comparison
+            >>> hash1 = hasher.hash_file('student1.py')
+            >>> hash2 = hasher.hash_file('student2.py')
+            >>> similarity, distance = hasher.compare_syntactic(hash1, hash2)
+            >>> print(f"Syntactic similarity: {similarity:.2%}")
         """
         if len(hash1) != len(hash2):
             raise ValueError("Hashes must be the same length")
@@ -410,15 +426,34 @@ class CodeHasher:
         
         return similarity, int(hamming_distance)
     
-    def compare_cross_language(self, code1: str, lang1: str, 
-                               code2: str, lang2: str) -> Tuple[float, Dict]:
+    # Alias for backward compatibility
+    def compare(self, hash1: np.ndarray, hash2: np.ndarray) -> Tuple[float, int]:
         """
-        Compare code across different languages using control flow patterns.
+        Alias for compare_syntactic(). Use compare_syntactic() instead.
         
-        Uses Jaccard similarity on normalized shingles instead of LSH hashing.
-        This is more accurate for cross-language detection with small feature sets.
+        This method is kept for backward compatibility but compare_syntactic()
+        better describes what this method does: syntactic/hash-based comparison.
+        """
+        return self.compare_syntactic(hash1, hash2)
+    
+    def compare_structural(self, code1: str, lang1: str, 
+                          code2: str, lang2: str) -> Tuple[float, Dict]:
+        """
+        Compare code based on algorithm structure and control flow patterns.
         
-        Best for: Detecting same algorithm implemented in different languages.
+        Focuses on SEMANTIC similarity by analyzing:
+        - Control flow structures (loops, conditionals)
+        - Nesting patterns
+        - Algorithm skeleton
+        
+        Uses Jaccard similarity on normalized control flow shingles.
+        Works across different languages and with different syntax styles.
+        
+        Best for:
+        - Detecting same algorithm in different languages
+        - Finding structural/algorithmic plagiarism
+        - Explainable results (shows matching patterns)
+        - Semantic similarity regardless of syntax
         
         Args:
             code1: First code string
@@ -432,12 +467,13 @@ class CodeHasher:
             - details: Dict with matching_shingles, total_shingles, etc.
             
         Example:
-            >>> similarity, details = hasher.compare_cross_language(
+            >>> # Detect algorithm-level similarity
+            >>> similarity, details = hasher.compare_structural(
             ...     python_code, 'python',
             ...     java_code, 'java'
             ... )
-            >>> print(f"Similarity: {similarity:.2%}")
-            >>> print(f"Matching shingles: {details['matching_shingles']}/{details['total_shingles']}")
+            >>> print(f"Structural similarity: {similarity:.2%}")
+            >>> print(f"Matching patterns: {details['matching_shingle_list']}")
         """
         # Extract and normalize features
         features1 = self._extract_features(code1, lang1)
@@ -470,3 +506,14 @@ class CodeHasher:
             'matching_shingle_list': sorted(list(intersection)),
             'k_value': k
         }
+    
+    # Alias for backward compatibility
+    def compare_cross_language(self, code1: str, lang1: str, 
+                               code2: str, lang2: str) -> Tuple[float, Dict]:
+        """
+        Alias for compare_structural(). Use compare_structural() instead.
+        
+        This method is kept for backward compatibility but compare_structural()
+        better describes what this method does: structural/algorithmic comparison.
+        """
+        return self.compare_structural(code1, lang1, code2, lang2)

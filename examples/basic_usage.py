@@ -103,14 +103,9 @@ public class BubbleSort {
     
     # Compare Python and Java implementations of same algorithm
     similarity, hamming_dist = hasher.compare(hash1, hash_java)
-    print(f"\nStandard hash comparison (Python vs Java): {similarity:.2%}")
+    print(f"\nCross-language similarity (Python vs Java): {similarity:.2%}")
     print(f"Hamming Distance: {hamming_dist}/256")
-    
-    # NEW: Compare using cross-language method
-    cross_sim, details = hasher.compare_cross_language(code1, 'python', java_code, 'java')
-    print(f"\nCross-language comparison (Python vs Java): {cross_sim:.2%}")
-    print(f"Matching patterns: {details['matching_shingles']}/{details['total_shingles']}")
-    print(f"Assessment: Cross-language plagiarism {'DETECTED!' if cross_sim > 0.55 else 'not detected'}\n")
+    print(f"Assessment: Cross-language plagiarism {'DETECTED' if similarity > 0.7 else 'not detected'}\n")
     
     # Example 5: C++ code
     print("Example 5: Hashing C++ code")
@@ -134,13 +129,8 @@ void bubbleSort(std::vector<int>& arr) {
     
     hash_cpp = hasher.hash_code(cpp_code, 'cpp')
     similarity, hamming_dist = hasher.compare(hash1, hash_cpp)
-    print(f"Standard hash comparison (Python vs C++): {similarity:.2%}")
-    print(f"Hamming Distance: {hamming_dist}/256")
-    
-    # Cross-language comparison
-    cross_sim, details = hasher.compare_cross_language(code1, 'python', cpp_code, 'cpp')
-    print(f"\nCross-language comparison (Python vs C++): {cross_sim:.2%}")
-    print(f"Matching patterns: {details['matching_shingles']}/{details['total_shingles']}\n")
+    print(f"Cross-language similarity (Python vs C++): {similarity:.2%}")
+    print(f"Hamming Distance: {hamming_dist}/256\n")
     
     print("="*50)
     print("Examples completed successfully!")
