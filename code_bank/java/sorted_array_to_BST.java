@@ -1,18 +1,28 @@
-public TreeNode sortedArrayToBST(int[] num) {
-    if (num.length == 0) {
-        return null;
+// Definition for a binary tree node.
+public class TreeNode {
+    int val;
+    TreeNode left;
+    TreeNode right;
+    TreeNode() {}
+    TreeNode(int val) { this.val = val; }
+    TreeNode(int val, TreeNode left, TreeNode right) {
+        this.val = val;
+        this.left = left;
+        this.right = right;
     }
-    TreeNode head = helper(num, 0, num.length - 1);
-    return head;
 }
 
-public TreeNode helper(int[] num, int low, int high) {
-    if (low > high) { // Done
-        return null;
+class Solution {
+    public TreeNode sortedArrayToBST(int[] nums) {
+        return helper(nums, 0, nums.length - 1);
     }
-    int mid = (low + high) / 2;
-    TreeNode node = new TreeNode(num[mid]);
-    node.left = helper(num, low, mid - 1);
-    node.right = helper(num, mid + 1, high);
-    return node;
+
+    private TreeNode helper(int[] nums, int left, int right) {
+        if (left > right) return null;
+        int mid = (left + right) / 2;
+        TreeNode root = new TreeNode(nums[mid]);
+        root.left = helper(nums, left, mid - 1);
+        root.right = helper(nums, mid + 1, right);
+        return root;
+    }
 }
