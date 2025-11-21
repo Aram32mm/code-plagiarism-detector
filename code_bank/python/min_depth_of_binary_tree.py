@@ -1,9 +1,20 @@
-def minDepth(self, root):
-    if not root: return 0
-    d = map(self.minDepth, (root.left, root.right))
-    return 1 + (min(d) or max(d))
-
-def minDepth(self, root):
-    if not root: return 0
-    d, D = sorted(map(self.minDepth, (root.left, root.right)))
-    return 1 + (d or D)
+# Definition for a binary tree node.
+# class TreeNode(object):
+#     def __init__(self, val=0, left=None, right=None):
+#         self.val = val
+#         self.left = left
+#         self.right = right
+class Solution(object):
+    def minDepth(self, root):
+        if not root:
+            return 0
+        queue = collections.deque([(root, 1)])
+        while queue:
+            node, level = queue.popleft()
+            if node:
+                if not node.left and not node.right:
+                    return level
+                else:
+                    queue.append((node.left, level+1))
+                    queue.append((node.right, level+1))
+        
