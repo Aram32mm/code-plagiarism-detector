@@ -1,16 +1,22 @@
-class Stack {
-    queue<int> q;
+class MyStack {
+private:
+    std::queue<int> q;
+
 public:
+    MyStack() {}
+
     void push(int x) {
         q.push(x);
-        for (int i=1; i<q.size(); i++) {
+        for (int i = 0; i < q.size() - 1; i++) {
             q.push(q.front());
             q.pop();
         }
     }
 
-    void pop() {
+    int pop() {
+        int top = q.front();
         q.pop();
+        return top;
     }
 
     int top() {
