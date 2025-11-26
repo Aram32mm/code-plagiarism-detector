@@ -1,10 +1,9 @@
-"""Dash web interface for Code Plagiarism Detector."""
+"""Streamlit web interface for Code Plagiarism Detector."""
 
-import dash
-from dash import dcc, html, Input, Output, State
-import dash_bootstrap_components as dbc
+import streamlit as st
+import pandas as pd
 import plotly.graph_objects as go
-import base64
+import plotly.express as px
 import sys
 from pathlib import Path
 
@@ -13,19 +12,45 @@ sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from code_plagiarism_detector import CodeHasher, CodeHashDatabase, load_code_bank
 
-# Initialize app
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP],
-                suppress_callback_exceptions=True)
-app.title = "Code Plagiarism Detector"
+# Page config
+st.set_page_config(
+    page_title="Code Plagiarism Detector",
+    page_icon="🔍",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# Initialize hasher and database
-hasher = CodeHasher()
-db = CodeHashDatabase("reference_hashes.db")
+# Custom CSS
+st.markdown("""
+<style>
+    .stAlert {border-radius: 10px;}
+    .metric-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 20px;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+    }
+    .code-box {
+        background-color: #1e1e1e;
+        border-radius: 5px;
+        padding: 10px;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        overflow-x: auto;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Load code_bank on startup
-code_bank_path = Path(__file__).parent / "code_bank"
-loaded_count = load_code_bank(str(code_bank_path), hasher, db)
-print(f"Loaded {loaded_count} reference files from code_bank")
+
+@st.cache_resource
+def init_detector():
+    """Initialize hasher and database once."""
+    hasher = CodeHasher()
+    db = CodeHashDatabase("reference_hashes.db")
+    code_bank_path = Path(__file__).parent / "code_bank"
+    loaded = load_code_bank(str(code_bank_path), hasher, db)
+    return hasher, db, loaded
 
 
 def infer_language(filename: str) -> str:
@@ -46,626 +71,546 @@ def infer_language(filename: str) -> str:
     return lang_map.get(ext, 'python')
 
 
-# Layout
-app.layout = dbc.Container([
-    dbc.Row([
-        dbc.Col([
-            html.H1("🔍 Code Plagiarism Detector", className="text-center mb-2"),
-            html.P("AST-based plagiarism detection with perceptual hashing", 
-                   className="text-center text-muted"),
-            html.Div([
-                dbc.Badge(f"{db.get_stats()['total_hashes']} reference files loaded", 
-                         color="success", className="me-2"),
-                dbc.Badge("Python • Java • C++", color="info")
-            ], className="text-center mb-3")
-        ])
-    ]),
-    
-    dbc.Tabs([
-        dbc.Tab(label="🆚 Compare Files", tab_id="compare"),
-        dbc.Tab(label="📊 Batch Analysis", tab_id="batch"),
-        dbc.Tab(label="🔍 Check Database", tab_id="check"),
-        dbc.Tab(label="💾 Database", tab_id="database"),
-        dbc.Tab(label="ℹ️ About", tab_id="about"),
-    ], id="tabs", active_tab="compare"),
-    
-    html.Div(id="tab-content", className="mt-4")
-], fluid=True, className="p-4")
+def get_confidence_color(confidence: str) -> str:
+    """Get color for confidence level."""
+    return {'high': '🔴', 'medium': '🟡', 'low': '🟢'}.get(confidence, '⚪')
 
 
-@app.callback(
-    Output("tab-content", "children"),
-    Input("tabs", "active_tab")
-)
-def render_tab_content(active_tab):
-    """Render content based on active tab."""
-    if active_tab == "compare":
-        return compare_tab()
-    elif active_tab == "batch":
-        return batch_tab()
-    elif active_tab == "check":
-        return check_tab()
-    elif active_tab == "database":
-        return database_tab()
-    else:
-        return about_tab()
-
-
-def compare_tab():
-    """Compare two files tab."""
-    return dbc.Container([
-        dbc.Row([
-            dbc.Col([
-                html.H4("File 1"),
-                dcc.Upload(
-                    id='upload-file1',
-                    children=dbc.Card([
-                        dbc.CardBody([
-                            "📁 Drag & Drop or Click to Select"
-                        ], className="text-center")
-                    ], style={'cursor': 'pointer'}),
-                    style={'width': '100%'}
-                ),
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Pre(id='file1-content', style={
-                            'maxHeight': '300px', 
-                            'overflow': 'auto',
-                            'fontSize': '12px',
-                            'margin': '0'
-                        })
-                    ])
-                ], className="mt-2")
-            ], md=6),
-            
-            dbc.Col([
-                html.H4("File 2"),
-                dcc.Upload(
-                    id='upload-file2',
-                    children=dbc.Card([
-                        dbc.CardBody([
-                            "📁 Drag & Drop or Click to Select"
-                        ], className="text-center")
-                    ], style={'cursor': 'pointer'}),
-                    style={'width': '100%'}
-                ),
-                dbc.Card([
-                    dbc.CardBody([
-                        html.Pre(id='file2-content', style={
-                            'maxHeight': '300px', 
-                            'overflow': 'auto',
-                            'fontSize': '12px',
-                            'margin': '0'
-                        })
-                    ])
-                ], className="mt-2")
-            ], md=6)
-        ]),
-        
-        dbc.Row([
-            dbc.Col([
-                dbc.Button("🔍 Compare", id="compare-btn", color="primary", 
-                          className="mt-3 mb-3", size="lg")
-            ], className="text-center")
-        ]),
-        
-        html.Div(id='compare-results')
-    ])
-
-
-def batch_tab():
-    """Batch analysis tab."""
-    return dbc.Container([
-        html.H4("Batch Analysis"),
-        html.P("Upload multiple files to compare all pairs"),
-        
-        dcc.Upload(
-            id='upload-batch',
-            children=dbc.Card([
-                dbc.CardBody([
-                    "📁 Drag & Drop Multiple Files or Click to Select"
-                ], className="text-center")
-            ], style={'cursor': 'pointer'}),
-            multiple=True
-        ),
-        
-        html.Div(id='batch-files-list', className="mt-2"),
-        
-        html.Label("Similarity Threshold:", className="mt-3"),
-        dcc.Slider(
-            id='batch-threshold',
-            min=0, max=1, step=0.05, value=0.60,
-            marks={i/10: f'{i*10}%' for i in range(0, 11, 2)},
-            className="mb-3"
-        ),
-        
-        dbc.Button("🔍 Analyze All Pairs", id="batch-btn", color="primary", 
-                  className="mb-3", size="lg"),
-        
-        html.Div(id='batch-results')
-    ])
-
-
-def check_tab():
-    """Check against database tab."""
-    stats = db.get_stats()
-    return dbc.Container([
-        html.H4("Check Against Reference Database"),
-        html.P(f"Compare your code against {stats['total_hashes']} reference implementations"),
-        
-        dcc.Upload(
-            id='upload-check',
-            children=dbc.Card([
-                dbc.CardBody([
-                    "📁 Upload Code to Check"
-                ], className="text-center")
-            ], style={'cursor': 'pointer'})
-        ),
-        
-        html.Div(id='check-file-info', className="mt-2"),
-        
-        html.Label("Minimum Similarity:", className="mt-3"),
-        dcc.Slider(
-            id='check-threshold',
-            min=0, max=1, step=0.05, value=0.50,
-            marks={i/10: f'{i*10}%' for i in range(0, 11, 2)}
-        ),
-        
-        dbc.Button("🔍 Check for Matches", id="check-btn", color="primary", 
-                  size="lg", className="mt-3"),
-        
-        html.Div(id='check-results', className="mt-3")
-    ])
-
-
-def database_tab():
-    """Database management tab."""
-    return dbc.Container([
-        html.H4("Database Management"),
-        
-        dbc.Row([
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardHeader("Add Reference Code"),
-                    dbc.CardBody([
-                        dbc.Input(id="db-source", placeholder="Source (e.g., leetcode, homework1)"),
-                        dcc.Upload(
-                            id='upload-db',
-                            children=html.Div(["📁 Upload File"]),
-                            style={
-                                'borderWidth': '1px', 'borderStyle': 'dashed',
-                                'borderRadius': '5px', 'textAlign': 'center',
-                                'padding': '10px', 'marginTop': '10px',
-                                'cursor': 'pointer'
-                            }
-                        ),
-                        html.Div(id='db-file-info', className="mt-2"),
-                        dbc.Button("💾 Add to Database", id="db-add-btn", color="primary", className="mt-2"),
-                        html.Div(id="db-add-result", className="mt-2")
-                    ])
-                ])
-            ], md=6),
-            
-            dbc.Col([
-                dbc.Card([
-                    dbc.CardHeader("Statistics & Actions"),
-                    dbc.CardBody([
-                        dbc.Button("🔄 Refresh Stats", id="db-stats-btn", color="secondary"),
-                        dbc.Button("🔄 Reload Code Bank", id="db-reload-btn", color="warning", className="ms-2"),
-                        html.Div(id="db-stats-result", className="mt-3")
-                    ])
-                ])
-            ], md=6)
-        ])
-    ])
-
-
-def about_tab():
-    """About tab."""
-    return dbc.Container([
-        html.H4("About Code Plagiarism Detector"),
-        html.Hr(),
-        
-        dbc.Row([
-            dbc.Col([
-                html.H5("🎯 Features"),
-                html.Ul([
-                    html.Li("AST-based structural analysis"),
-                    html.Li("Cross-language detection (Python ↔ Java ↔ C++)"),
-                    html.Li("256-bit perceptual hashing (LSH)"),
-                    html.Li("Reference database with code_bank"),
-                    html.Li("Batch comparison support"),
-                    html.Li("Auto language detection from file extension")
-                ]),
-            ], md=6),
-            
-            dbc.Col([
-                html.H5("📊 How It Works"),
-                html.Ol([
-                    html.Li("Parse code → AST (tree-sitter)"),
-                    html.Li("Extract control flow (LOOP, COND)"),
-                    html.Li("Normalize patterns across languages"),
-                    html.Li("Generate shingles → LSH hash"),
-                    html.Li("Compare: Hamming (syntactic) + Jaccard (structural)")
-                ]),
-            ], md=6)
-        ]),
-        
-        html.Hr(),
-        
-        html.H5("🚦 Confidence Levels"),
-        dbc.Row([
-            dbc.Col(dbc.Alert("🔴 HIGH: ≥60% structural match", color="danger"), md=4),
-            dbc.Col(dbc.Alert("🟡 MEDIUM: 40-60% match", color="warning"), md=4),
-            dbc.Col(dbc.Alert("🟢 LOW: <40% match", color="success"), md=4),
-        ]),
-        
-        html.Hr(),
-        
-        html.H5("📁 Supported Languages"),
-        dbc.Row([
-            dbc.Col(dbc.Badge("Python (.py)", color="primary", className="me-2 p-2")),
-            dbc.Col(dbc.Badge("Java (.java)", color="danger", className="me-2 p-2")),
-            dbc.Col(dbc.Badge("C++ (.cpp, .cc, .h, .hpp)", color="info", className="p-2")),
-        ])
-    ])
-
-
-# ============================================================================
-# Callbacks
-# ============================================================================
-
-@app.callback(
-    Output('file1-content', 'children'),
-    Input('upload-file1', 'contents'),
-    State('upload-file1', 'filename')
-)
-def display_file1(contents, filename):
-    if contents:
-        _, content_string = contents.split(',')
-        decoded = base64.b64decode(content_string).decode('utf-8')
-        lang = infer_language(filename)
-        return f"📄 {filename} [{lang}]\n{'─'*40}\n{decoded[:2000]}{'...' if len(decoded) > 2000 else ''}"
-    return "No file uploaded"
-
-
-@app.callback(
-    Output('file2-content', 'children'),
-    Input('upload-file2', 'contents'),
-    State('upload-file2', 'filename')
-)
-def display_file2(contents, filename):
-    if contents:
-        _, content_string = contents.split(',')
-        decoded = base64.b64decode(content_string).decode('utf-8')
-        lang = infer_language(filename)
-        return f"📄 {filename} [{lang}]\n{'─'*40}\n{decoded[:2000]}{'...' if len(decoded) > 2000 else ''}"
-    return "No file uploaded"
-
-
-@app.callback(
-    Output('compare-results', 'children'),
-    Input('compare-btn', 'n_clicks'),
-    State('upload-file1', 'contents'),
-    State('upload-file1', 'filename'),
-    State('upload-file2', 'contents'),
-    State('upload-file2', 'filename'),
-    prevent_initial_call=True
-)
-def compare_files(n_clicks, contents1, filename1, contents2, filename2):
-    if not contents1 or not contents2:
-        return dbc.Alert("Please upload both files", color="warning")
-    
-    try:
-        _, content_string1 = contents1.split(',')
-        code1 = base64.b64decode(content_string1).decode('utf-8')
-        
-        _, content_string2 = contents2.split(',')
-        code2 = base64.b64decode(content_string2).decode('utf-8')
-        
-        # Infer languages from filenames
-        lang1 = infer_language(filename1)
-        lang2 = infer_language(filename2)
-        
-        # Compare
-        result = hasher.compare(code1, lang1, code2, lang2)
-        
-        # Create gauge chart
-        fig = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=result.similarity * 100,
-            title={'text': f"Similarity ({result.method_used})"},
-            gauge={
-                'axis': {'range': [0, 100]},
-                'bar': {'color': "darkblue"},
-                'steps': [
-                    {'range': [0, 50], 'color': "lightgreen"},
-                    {'range': [50, 70], 'color': "yellow"},
-                    {'range': [70, 85], 'color': "orange"},
-                    {'range': [85, 100], 'color': "red"}
-                ],
-                'threshold': {
-                    'line': {'color': "red", 'width': 4},
-                    'thickness': 0.75,
-                    'value': 60
-                }
+def create_similarity_gauge(value: float, title: str = "Similarity") -> go.Figure:
+    """Create a gauge chart for similarity."""
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=value * 100,
+        number={'suffix': '%', 'font': {'size': 40}},
+        title={'text': title, 'font': {'size': 16}},
+        gauge={
+            'axis': {'range': [0, 100], 'tickwidth': 1},
+            'bar': {'color': "#1f77b4"},
+            'bgcolor': "white",
+            'steps': [
+                {'range': [0, 40], 'color': '#d4edda'},
+                {'range': [40, 60], 'color': '#fff3cd'},
+                {'range': [60, 80], 'color': '#ffe5b4'},
+                {'range': [80, 100], 'color': '#f8d7da'}
+            ],
+            'threshold': {
+                'line': {'color': "red", 'width': 4},
+                'thickness': 0.75,
+                'value': 60
             }
-        ))
-        
-        color_map = {'high': 'danger', 'medium': 'warning', 'low': 'success'}
-        alert_color = color_map.get(result.confidence, 'info')
-        
-        return dbc.Container([
-            html.Hr(),
-            html.H4("Results"),
-            
-            dbc.Row([
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.H6("Files Compared"),
-                            html.Small(f"📄 {filename1} ({lang1})"),
-                            html.Br(),
-                            html.Small(f"📄 {filename2} ({lang2})")
-                        ])
-                    ])
-                ], md=3),
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.H6("Overall Similarity"),
-                            html.H2(f"{result.similarity:.1%}")
-                        ])
-                    ])
-                ], md=3),
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.H6("Structural Match"),
-                            html.H2(f"{result.structural_similarity:.1%}")
-                        ])
-                    ])
-                ], md=3),
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.H6("Confidence"),
-                            dbc.Badge(result.confidence.upper(), color=alert_color, className="fs-4")
-                        ])
-                    ])
-                ], md=3)
-            ], className="mb-3"),
-            
-            dbc.Row([
-                dbc.Col([
-                    dcc.Graph(figure=fig)
-                ], md=8),
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardHeader("Detection Details"),
-                        dbc.CardBody([
-                            html.P([html.Strong("Syntactic: "), f"{result.syntactic_similarity:.1%}"]),
-                            html.P([html.Strong("Structural: "), f"{result.structural_similarity:.1%}"]),
-                            html.P([html.Strong("Hamming: "), f"{result.hamming_distance}/256"]),
-                            html.P([html.Strong("Patterns: "), result.pattern_match_ratio]),
-                            html.Hr(),
-                            html.P("Matching Patterns:", className="fw-bold"),
-                            html.Ul([html.Li(p, style={'fontSize': '11px'}) 
-                                    for p in result.matching_patterns[:5]]) if result.matching_patterns else html.P("None", className="text-muted")
-                        ])
-                    ])
-                ], md=4)
-            ]),
-            
-            dbc.Alert(
-                f"{'⚠️ PLAGIARISM DETECTED' if result.plagiarism_detected else '✅ No significant plagiarism detected'}",
-                color=alert_color,
-                className="mt-3"
-            )
-        ])
-        
-    except Exception as e:
-        return dbc.Alert(f"Error: {str(e)}", color="danger")
+        }
+    ))
+    fig.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20))
+    return fig
 
 
-@app.callback(
-    Output('batch-files-list', 'children'),
-    Input('upload-batch', 'filename')
-)
-def show_batch_files(filenames):
-    if filenames:
-        return dbc.Alert(f"Selected {len(filenames)} files: {', '.join(filenames[:5])}{'...' if len(filenames) > 5 else ''}", color="info")
-    return ""
+# Initialize
+hasher, db, loaded_count = init_detector()
 
-
-@app.callback(
-    Output('batch-results', 'children'),
-    Input('batch-btn', 'n_clicks'),
-    State('upload-batch', 'contents'),
-    State('upload-batch', 'filename'),
-    State('batch-threshold', 'value'),
-    prevent_initial_call=True
-)
-def batch_analysis(n_clicks, contents_list, filenames, threshold):
-    if not contents_list or len(contents_list) < 2:
-        return dbc.Alert("Please upload at least 2 files", color="warning")
+# Sidebar
+with st.sidebar:
+    st.title("🔍 Plagiarism Detector")
+    st.caption("AST-based code similarity detection")
     
-    try:
-        # Decode all files
-        files = []
-        for contents, filename in zip(contents_list, filenames):
-            _, content_string = contents.split(',')
-            code = base64.b64decode(content_string).decode('utf-8')
-            lang = infer_language(filename)
-            files.append({'name': filename, 'code': code, 'lang': lang})
+    st.divider()
+    
+    stats = db.get_stats()
+    st.metric("Reference Files", stats['total_hashes'])
+    
+    if stats.get('by_language'):
+        st.caption("By Language:")
+        for lang, count in stats['by_language'].items():
+            st.text(f"  {lang}: {count}")
+    
+    st.divider()
+    
+    page = st.radio(
+        "Navigation",
+        ["🆚 Compare Files", "📊 Batch Analysis", "🔍 Database Search", "💾 Database Manager", "ℹ️ How It Works"],
+        label_visibility="collapsed"
+    )
+
+
+# ============================================================================
+# COMPARE FILES PAGE
+# ============================================================================
+if page == "🆚 Compare Files":
+    st.header("🆚 Compare Two Files")
+    st.caption("Upload two code files to check for similarity")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("File 1")
+        file1 = st.file_uploader("Upload first file", type=['py', 'java', 'cpp', 'cc', 'c', 'h', 'hpp'], key="file1")
+        if file1:
+            code1 = file1.read().decode('utf-8')
+            lang1 = infer_language(file1.name)
+            st.success(f"📄 {file1.name} [{lang1}]")
+            with st.expander("View Code", expanded=False):
+                st.code(code1[:3000] + ('...' if len(code1) > 3000 else ''), language=lang1)
+    
+    with col2:
+        st.subheader("File 2")
+        file2 = st.file_uploader("Upload second file", type=['py', 'java', 'cpp', 'cc', 'c', 'h', 'hpp'], key="file2")
+        if file2:
+            code2 = file2.read().decode('utf-8')
+            lang2 = infer_language(file2.name)
+            st.success(f"📄 {file2.name} [{lang2}]")
+            with st.expander("View Code", expanded=False):
+                st.code(code2[:3000] + ('...' if len(code2) > 3000 else ''), language=lang2)
+    
+    if file1 and file2:
+        if st.button("🔍 Analyze Similarity", type="primary", use_container_width=True):
+            with st.spinner("Analyzing..."):
+                result = hasher.compare(code1, lang1, code2, lang2)
+            
+            st.divider()
+            
+            # Main result
+            col_result, col_gauge = st.columns([1, 1])
+            
+            with col_result:
+                st.subheader("Analysis Result")
+                
+                # Confidence badge
+                conf_emoji = get_confidence_color(result.confidence)
+                if result.plagiarism_detected:
+                    st.error(f"{conf_emoji} **PLAGIARISM LIKELY** - Confidence: {result.confidence.upper()}")
+                else:
+                    st.success(f"{conf_emoji} **No significant plagiarism** - Confidence: {result.confidence.upper()}")
+                
+                # Metrics
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Syntactic Similarity", f"{result.syntactic_similarity:.1%}", 
+                         help="Hash-based comparison - captures variable naming patterns, formatting")
+                m2.metric("Structural Similarity", f"{result.structural_similarity:.1%}",
+                         help="Control flow comparison - captures algorithm structure (loops, conditions)")
+                m3.metric("Hamming Distance", f"{result.hamming_distance}/256",
+                         help="Number of differing bits in the hash (lower = more similar)")
+            
+            with col_gauge:
+                # Show the HIGHER of the two similarities
+                main_sim = max(result.syntactic_similarity, result.structural_similarity)
+                fig = create_similarity_gauge(main_sim, "Best Match")
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Explanation
+            with st.expander("📊 Understanding the Results", expanded=True):
+                st.markdown(f"""
+                **How similarity is calculated:**
+                
+                | Metric | Value | Meaning |
+                |--------|-------|---------|
+                | Syntactic | {result.syntactic_similarity:.1%} | Code structure hash comparison (catches renamed variables) |
+                | Structural | {result.structural_similarity:.1%} | Algorithm pattern comparison (catches cross-language plagiarism) |
+                | **Final Score** | **{result.similarity:.1%}** | Maximum of both methods |
+                
+                **Method used:** `{result.method_used}` gave the higher score
+                
+                **Why two methods?**
+                - **Syntactic** works best for same-language, copy-paste plagiarism
+                - **Structural** works best for cross-language or rewritten plagiarism
+                
+                **Confidence levels:**
+                - 🔴 **HIGH**: ≥60% structural match - very likely plagiarism
+                - 🟡 **MEDIUM**: 40-60% match - needs review
+                - 🟢 **LOW**: <40% match - probably original
+                """)
+            
+            # Matching patterns
+            if result.matching_patterns:
+                with st.expander(f"🔗 Matching Patterns ({result.pattern_match_ratio})"):
+                    for pattern in result.matching_patterns:
+                        st.code(pattern)
+
+
+# ============================================================================
+# BATCH ANALYSIS PAGE
+# ============================================================================
+elif page == "📊 Batch Analysis":
+    st.header("📊 Batch Analysis")
+    st.caption("Upload multiple files to find all similar pairs (e.g., check student submissions)")
+    
+    files = st.file_uploader(
+        "Upload multiple files",
+        type=['py', 'java', 'cpp', 'cc', 'c', 'h', 'hpp'],
+        accept_multiple_files=True
+    )
+    
+    if files and len(files) >= 2:
+        st.info(f"📁 {len(files)} files uploaded - will compare {len(files) * (len(files)-1) // 2} pairs")
         
-        # Compare all pairs
-        results = []
-        for i in range(len(files)):
-            for j in range(i + 1, len(files)):
-                result = hasher.compare(
-                    files[i]['code'], files[i]['lang'],
-                    files[j]['code'], files[j]['lang']
+        threshold = st.slider("Minimum similarity to report", 0.0, 1.0, 0.5, 0.05, format="%.0f%%")
+        
+        if st.button("🔍 Analyze All Pairs", type="primary"):
+            # Load all files
+            file_data = []
+            for f in files:
+                code = f.read().decode('utf-8')
+                lang = infer_language(f.name)
+                file_data.append({'name': f.name, 'code': code, 'lang': lang})
+            
+            # Compare all pairs
+            results = []
+            progress = st.progress(0)
+            total_pairs = len(file_data) * (len(file_data) - 1) // 2
+            pair_count = 0
+            
+            for i in range(len(file_data)):
+                for j in range(i + 1, len(file_data)):
+                    result = hasher.compare(
+                        file_data[i]['code'], file_data[i]['lang'],
+                        file_data[j]['code'], file_data[j]['lang']
+                    )
+                    
+                    if result.similarity >= threshold:
+                        results.append({
+                            'File 1': file_data[i]['name'],
+                            'File 2': file_data[j]['name'],
+                            'Similarity': result.similarity,
+                            'Syntactic': result.syntactic_similarity,
+                            'Structural': result.structural_similarity,
+                            'Confidence': result.confidence.upper()
+                        })
+                    
+                    pair_count += 1
+                    progress.progress(pair_count / total_pairs)
+            
+            progress.empty()
+            
+            if results:
+                st.warning(f"⚠️ Found {len(results)} suspicious pairs above {threshold:.0%} threshold")
+                
+                # Sort by similarity
+                df = pd.DataFrame(results)
+                df = df.sort_values('Similarity', ascending=False)
+                df['Similarity'] = df['Similarity'].apply(lambda x: f"{x:.1%}")
+                df['Syntactic'] = df['Syntactic'].apply(lambda x: f"{x:.1%}")
+                df['Structural'] = df['Structural'].apply(lambda x: f"{x:.1%}")
+                
+                # Color code by confidence
+                st.dataframe(
+                    df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        'Confidence': st.column_config.TextColumn(
+                            help="HIGH = likely plagiarism, MEDIUM = review needed, LOW = probably ok"
+                        )
+                    }
                 )
                 
-                if result.similarity >= threshold:
-                    results.append({
-                        'File 1': files[i]['name'],
-                        'File 2': files[j]['name'],
-                        'Similarity': f"{result.similarity:.1%}",
-                        'Structural': f"{result.structural_similarity:.1%}",
-                        'Confidence': result.confidence.upper()
-                    })
-        
-        if not results:
-            return dbc.Alert(f"✅ No pairs found above {threshold:.0%} threshold", color="success")
-        
-        results.sort(key=lambda x: x['Similarity'], reverse=True)
-        
-        import pandas as pd
-        return dbc.Container([
-            dbc.Alert(f"⚠️ Found {len(results)} suspicious pairs", color="warning"),
-            dbc.Table.from_dataframe(
-                pd.DataFrame(results),
-                striped=True, bordered=True, hover=True, size='sm'
-            )
-        ])
-        
-    except Exception as e:
-        return dbc.Alert(f"Error: {str(e)}", color="danger")
-
-
-@app.callback(
-    Output('check-file-info', 'children'),
-    Input('upload-check', 'filename')
-)
-def show_check_file(filename):
-    if filename:
-        lang = infer_language(filename)
-        return dbc.Alert(f"📄 {filename} [{lang}]", color="info")
-    return ""
-
-
-@app.callback(
-    Output('check-results', 'children'),
-    Input('check-btn', 'n_clicks'),
-    State('upload-check', 'contents'),
-    State('upload-check', 'filename'),
-    State('check-threshold', 'value'),
-    prevent_initial_call=True
-)
-def check_against_db(n_clicks, contents, filename, threshold):
-    if not contents:
-        return dbc.Alert("Please upload a file", color="warning")
+                # Heatmap
+                if len(file_data) <= 20:
+                    st.subheader("Similarity Matrix")
+                    
+                    # Build matrix
+                    n = len(file_data)
+                    matrix = [[0.0] * n for _ in range(n)]
+                    names = [f['name'][:20] for f in file_data]
+                    
+                    for i in range(n):
+                        matrix[i][i] = 1.0
+                        for j in range(i + 1, n):
+                            r = hasher.compare(
+                                file_data[i]['code'], file_data[i]['lang'],
+                                file_data[j]['code'], file_data[j]['lang']
+                            )
+                            matrix[i][j] = r.similarity
+                            matrix[j][i] = r.similarity
+                    
+                    fig = px.imshow(
+                        matrix,
+                        x=names,
+                        y=names,
+                        color_continuous_scale='RdYlGn_r',
+                        zmin=0, zmax=1
+                    )
+                    fig.update_layout(height=500)
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.success(f"✅ No pairs found above {threshold:.0%} threshold - all files appear original!")
     
-    try:
-        _, content_string = contents.split(',')
-        code = base64.b64decode(content_string).decode('utf-8')
-        lang = infer_language(filename)
-        
-        # Hash the code
-        query_hash = hasher.hash_code(code, lang)
-        
-        # Search database
-        matches = db.find_similar(query_hash, threshold=threshold)
-        
-        if not matches:
-            return dbc.Alert("✅ No matches found - code appears original!", color="success")
-        
-        import pandas as pd
-        rows = []
-        for match in matches[:10]:
-            rows.append({
-                'Source': match['source'],
-                'File': match['file_path'],
-                'Similarity': f"{match['similarity']:.1%}",
-                'Language': match['language']
-            })
-        
-        return dbc.Container([
-            dbc.Alert(f"⚠️ Found {len(matches)} potential matches!", color="warning"),
-            dbc.Table.from_dataframe(
-                pd.DataFrame(rows),
-                striped=True, bordered=True, hover=True, size='sm'
-            )
-        ])
-        
-    except Exception as e:
-        return dbc.Alert(f"Error: {str(e)}", color="danger")
+    elif files:
+        st.warning("Please upload at least 2 files")
 
 
-@app.callback(
-    Output('db-file-info', 'children'),
-    Input('upload-db', 'filename')
-)
-def show_db_file(filename):
-    if filename:
-        lang = infer_language(filename)
-        return html.Small(f"📄 {filename} [{lang}]")
-    return ""
-
-
-@app.callback(
-    Output('db-add-result', 'children'),
-    Input('db-add-btn', 'n_clicks'),
-    State('upload-db', 'contents'),
-    State('upload-db', 'filename'),
-    State('db-source', 'value'),
-    prevent_initial_call=True
-)
-def add_to_database(n_clicks, contents, filename, source):
-    if not contents or not source:
-        return dbc.Alert("Please upload file and enter source", color="warning")
+# ============================================================================
+# DATABASE SEARCH PAGE
+# ============================================================================
+elif page == "🔍 Database Search":
+    st.header("🔍 Database Search")
+    st.caption("Search and explore the reference code database")
     
-    try:
-        _, content_string = contents.split(',')
-        code = base64.b64decode(content_string).decode('utf-8')
-        lang = infer_language(filename)
+    tab1, tab2 = st.tabs(["🔎 Check Against Database", "📚 Browse Database"])
+    
+    with tab1:
+        st.subheader("Check Your Code")
+        st.caption("Compare your code against all reference implementations")
         
-        hash_value = hasher.hash_code(code, lang)
-        
-        db.add_hash(
-            source=source,
-            file_path=filename,
-            language=lang,
-            hash_value=hash_value,
-            metadata={'added_via': 'web_ui'}
+        check_file = st.file_uploader(
+            "Upload file to check",
+            type=['py', 'java', 'cpp', 'cc', 'c', 'h', 'hpp'],
+            key="check_file"
         )
         
-        return dbc.Alert(f"✅ Added {filename} [{lang}] to database", color="success")
+        threshold = st.slider("Minimum similarity", 0.0, 1.0, 0.4, 0.05, key="check_thresh")
         
-    except Exception as e:
-        return dbc.Alert(f"Error: {str(e)}", color="danger")
-
-
-@app.callback(
-    Output('db-stats-result', 'children'),
-    Input('db-stats-btn', 'n_clicks'),
-    Input('db-reload-btn', 'n_clicks'),
-    prevent_initial_call=True
-)
-def refresh_stats(stats_clicks, reload_clicks):
-    ctx = dash.callback_context
+        if check_file:
+            code = check_file.read().decode('utf-8')
+            lang = infer_language(check_file.name)
+            
+            st.info(f"📄 {check_file.name} [{lang}]")
+            
+            if st.button("🔍 Search Database", type="primary"):
+                with st.spinner("Searching..."):
+                    query_hash = hasher.hash_code(code, lang)
+                    matches = db.find_similar(query_hash, threshold=threshold, limit=20)
+                
+                if matches:
+                    st.warning(f"⚠️ Found {len(matches)} potential matches!")
+                    
+                    df = pd.DataFrame([{
+                        'Source': m['source'],
+                        'File': m['file_path'],
+                        'Language': m['language'],
+                        'Similarity': f"{m['similarity']:.1%}"
+                    } for m in matches])
+                    
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+                else:
+                    st.success("✅ No matches found - code appears original!")
     
-    if ctx.triggered_id == 'db-reload-btn':
-        loaded = load_code_bank(str(code_bank_path), hasher, db, force_reload=True)
-        return dbc.Alert(f"✅ Reloaded {loaded} files from code_bank", color="success")
-    
-    stats = db.get_stats()
-    
-    return dbc.Container([
-        html.H6(f"📁 Total files: {stats['total_hashes']}"),
-        html.Hr(),
-        html.P("By Language:", className="fw-bold mb-1"),
-        html.Ul([html.Li(f"{lang}: {count}") for lang, count in stats.get('by_language', {}).items()]),
-        html.P("By Source:", className="fw-bold mb-1"),
-        html.Ul([html.Li(f"{src}: {count}") for src, count in stats.get('by_source', {}).items()])
-    ])
+    with tab2:
+        st.subheader("Browse Reference Database")
+        
+        stats = db.get_stats()
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Files", stats['total_hashes'])
+        col2.metric("Languages", len(stats.get('by_language', {})))
+        col3.metric("Sources", len(stats.get('by_source', {})))
+        
+        # Filters
+        st.divider()
+        
+        fcol1, fcol2 = st.columns(2)
+        with fcol1:
+            lang_filter = st.selectbox(
+                "Filter by Language",
+                ["All"] + list(stats.get('by_language', {}).keys())
+            )
+        with fcol2:
+            source_filter = st.selectbox(
+                "Filter by Source",
+                ["All"] + list(stats.get('by_source', {}).keys())
+            )
+        
+        # Get all entries (limited)
+        cursor = db.conn.cursor()
+        query = "SELECT source, file_path, language, created_at FROM code_hashes"
+        conditions = []
+        params = []
+        
+        if lang_filter != "All":
+            conditions.append("language = ?")
+            params.append(lang_filter)
+        if source_filter != "All":
+            conditions.append("source = ?")
+            params.append(source_filter)
+        
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        
+        query += " ORDER BY created_at DESC LIMIT 100"
+        cursor.execute(query, params)
+        
+        rows = cursor.fetchall()
+        if rows:
+            df = pd.DataFrame(rows, columns=['Source', 'File', 'Language', 'Added'])
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No entries found")
+        
+        # Visualizations
+        st.divider()
+        st.subheader("📊 Database Statistics")
+        
+        vcol1, vcol2 = st.columns(2)
+        
+        with vcol1:
+            if stats.get('by_language'):
+                fig = px.pie(
+                    values=list(stats['by_language'].values()),
+                    names=list(stats['by_language'].keys()),
+                    title="By Language"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        
+        with vcol2:
+            if stats.get('by_source'):
+                fig = px.bar(
+                    x=list(stats['by_source'].keys()),
+                    y=list(stats['by_source'].values()),
+                    title="By Source"
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
 
-if __name__ == '__main__':
-    stats = db.get_stats()
-    print(f"Starting server with {stats['total_hashes']} reference files...")
-    print(f"Languages: {stats.get('by_language', {})}")
-    print(f"Sources: {stats.get('by_source', {})}")
-    app.run(debug=True, port=8050)
+# ============================================================================
+# DATABASE MANAGER PAGE
+# ============================================================================
+elif page == "💾 Database Manager":
+    st.header("💾 Database Manager")
+    
+    tab1, tab2, tab3 = st.tabs(["➕ Add Files", "🔄 Reload Code Bank", "🗑️ Clear Database"])
+    
+    with tab1:
+        st.subheader("Add Reference File")
+        
+        source = st.text_input("Source identifier", placeholder="e.g., leetcode, homework1, official")
+        add_file = st.file_uploader(
+            "Upload file",
+            type=['py', 'java', 'cpp', 'cc', 'c', 'h', 'hpp'],
+            key="add_file"
+        )
+        
+        if add_file and source:
+            code = add_file.read().decode('utf-8')
+            lang = infer_language(add_file.name)
+            
+            st.code(code[:500] + ('...' if len(code) > 500 else ''), language=lang)
+            
+            if st.button("💾 Add to Database", type="primary"):
+                try:
+                    hash_value = hasher.hash_code(code, lang)
+                    db.add_hash(
+                        source=source,
+                        file_path=add_file.name,
+                        language=lang,
+                        hash_value=hash_value,
+                        metadata={'added_via': 'streamlit'}
+                    )
+                    st.success(f"✅ Added {add_file.name} to database!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    
+    with tab2:
+        st.subheader("Reload Code Bank")
+        st.caption("Reload all files from the code_bank folder")
+        
+        code_bank_path = Path(__file__).parent / "code_bank"
+        
+        if code_bank_path.exists():
+            st.info(f"📁 Code bank path: `{code_bank_path}`")
+            
+            # Show what's in code_bank
+            files_found = list(code_bank_path.rglob('*'))
+            code_files = [f for f in files_found if f.suffix in ['.py', '.java', '.cpp', '.cc', '.c', '.h', '.hpp']]
+            st.text(f"Found {len(code_files)} code files")
+            
+            if st.button("🔄 Reload All", type="primary"):
+                with st.spinner("Reloading..."):
+                    loaded = load_code_bank(str(code_bank_path), hasher, db, force_reload=True)
+                st.success(f"✅ Reloaded {loaded} files!")
+                st.rerun()
+        else:
+            st.warning(f"Code bank folder not found: `{code_bank_path}`")
+    
+    with tab3:
+        st.subheader("Clear Database")
+        st.warning("⚠️ This will delete ALL reference hashes from the database!")
+        
+        if st.button("🗑️ Clear All", type="secondary"):
+            confirm = st.checkbox("I understand this cannot be undone")
+            if confirm:
+                db.clear()
+                st.success("Database cleared!")
+                st.rerun()
+
+
+# ============================================================================
+# HOW IT WORKS PAGE
+# ============================================================================
+elif page == "ℹ️ How It Works":
+    st.header("ℹ️ How It Works")
+    
+    st.markdown("""
+    ## 🎯 Overview
+    
+    This tool detects code plagiarism using **AST (Abstract Syntax Tree) analysis** 
+    and **perceptual hashing**. It can detect plagiarism even when:
+    
+    - Variables are renamed
+    - Comments are changed
+    - Code is reformatted
+    - Code is translated to another language (Python ↔ Java ↔ C++)
+    
+    ---
+    
+    ## 🔬 Two Detection Methods
+    
+    ### 1. Syntactic Similarity (Hash-based)
+    
+    Generates a 256-bit "fingerprint" of the code structure:
+    
+    ```
+    Code → AST → Extract Features → Shingles → LSH Hash → Hamming Distance
+    ```
+    
+    **Best for:** Same-language copy-paste with renamed variables
+    
+    ### 2. Structural Similarity (Pattern-based)
+    
+    Compares control flow patterns across languages:
+    
+    ```
+    Code → AST → Extract LOOP/COND patterns → Normalize depths → Jaccard similarity
+    ```
+    
+    **Best for:** Cross-language plagiarism, algorithm detection
+    
+    ---
+    
+    ## 📊 Similarity Scores Explained
+    
+    | Score | Meaning |
+    |-------|---------|
+    | **Syntactic** | How similar the code "looks" (structure, patterns) |
+    | **Structural** | How similar the algorithms are (control flow) |
+    | **Final** | Maximum of both (best evidence of plagiarism) |
+    
+    ---
+    
+    ## 🚦 Confidence Levels
+    
+    | Level | Threshold | Meaning |
+    |-------|-----------|---------|
+    | 🔴 **HIGH** | ≥60% structural | Very likely plagiarism |
+    | 🟡 **MEDIUM** | 40-60% | Needs manual review |
+    | 🟢 **LOW** | <40% | Probably original |
+    
+    ---
+    
+    ## ⚠️ Limitations
+    
+    - Similar algorithms (like tree traversal) may show high structural similarity 
+      even if independently written
+    - Very short code snippets may give unreliable results
+    - The tool detects similarity, not intent - manual review is still needed
+    
+    ---
+    
+    ## 📁 Supported Languages
+    
+    - **Python** (.py)
+    - **Java** (.java)  
+    - **C/C++** (.cpp, .cc, .c, .h, .hpp)
+    """)
+
+
+# Footer
+st.divider()
+st.caption("Code Plagiarism Detector • Built with Streamlit • AST-based analysis using tree-sitter")
