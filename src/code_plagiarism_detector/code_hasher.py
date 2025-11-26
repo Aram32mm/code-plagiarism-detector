@@ -48,9 +48,9 @@ class LanguageConfig:
 @dataclass
 class DetectorConfig:
     """Configuration for detection thresholds and behavior."""
-    high_confidence_threshold: float = 0.70      # Stricter
-    medium_confidence_threshold: float = 0.50    # Stricter
-    plagiarism_threshold: float = 0.60           # Stricter
+    high_confidence_threshold: float = 0.80
+    medium_confidence_threshold: float = 0.60
+    plagiarism_threshold: float = 0.60
     hash_bits: int = 256
     shingle_sizes: Tuple[int, int, int] = (2, 3, 4)
     shingle_thresholds: Tuple[int, int] = (5, 15)
@@ -198,9 +198,9 @@ class CodeHasher:
         method_used = 'syntactic' if syntactic_sim >= structural_sim else 'structural'
         
         # Confidence based on config thresholds - ALIGNED WITH UI
-        if structural_sim >= 0.70 or best_sim >= 0.90:
+        if structural_sim >= 0.80 or best_sim >= 0.90:
             confidence = 'high'
-        elif structural_sim >= 0.50 or best_sim >= 0.75:
+        elif structural_sim >= 0.60 or best_sim >= 0.75:
             confidence = 'medium'
         else:
             confidence = 'low'

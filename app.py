@@ -80,10 +80,10 @@ def create_similarity_gauge(value: float, title: str = "Similarity") -> go.Figur
     """Create a gauge chart for similarity."""
     
     # Align with plagiarism thresholds
-    if value >= 0.70:
+    if value >= 0.80:
         bar_color = "#dc3545"  # Red - HIGH
-    elif value >= 0.50:
-        bar_color = "#fd7e14"  # Orange - MEDIUM  
+    elif value >= 0.60:
+        bar_color = "#fd7e14"  # Orange - MEDIUM
     else:
         bar_color = "#28a745"  # Green - LOW
     
@@ -98,9 +98,9 @@ def create_similarity_gauge(value: float, title: str = "Similarity") -> go.Figur
             'bgcolor': "rgba(0,0,0,0)",
             'borderwidth': 0,
             'steps': [
-                {'range': [0, 50], 'color': 'rgba(40, 167, 69, 0.3)'},    # Green - LOW
-                {'range': [50, 70], 'color': 'rgba(253, 126, 20, 0.3)'},  # Orange - MEDIUM
-                {'range': [70, 100], 'color': 'rgba(220, 53, 69, 0.3)'}   # Red - HIGH
+                {'range': [0, 60], 'color': 'rgba(40, 167, 69, 0.3)'},    # Green - LOW
+                {'range': [60, 80], 'color': 'rgba(253, 126, 20, 0.3)'},  # Orange - MEDIUM
+                {'range': [80, 100], 'color': 'rgba(220, 53, 69, 0.3)'}   # Red - HIGH
             ],
         }
     ))
