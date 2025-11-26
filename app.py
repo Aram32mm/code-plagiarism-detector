@@ -109,32 +109,52 @@ hasher, db, loaded_count = init_detector()
 
 # Sidebar
 with st.sidebar:
-    st.title("🔍 Plagiarism Detector")
-    st.caption("AST-based code similarity detection")
+    st.markdown("""
+    <div style="text-align: center; padding: 1rem 0;">
+        <h1 style="margin: 0; font-size: 2.5rem;">🔍</h1>
+        <h3 style="margin: 0.5rem 0;">Plagiarism Detector</h3>
+        <p style="color: #888; font-size: 0.8rem; margin: 0;">AST-based code similarity</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     st.divider()
     
+    # Navigation buttons
+    pages = {
+        "compare": ("🆚", "Compare Files"),
+        "batch": ("📊", "Batch Analysis"),
+        "search": ("🔍", "Database Search"),
+        "manager": ("💾", "Database Manager"),
+        "about": ("ℹ️", "How It Works"),
+    }
+    
+    if 'page' not in st.session_state:
+        st.session_state.page = "compare"
+    
+    for key, (icon, label) in pages.items():
+        is_active = st.session_state.page == key
+        if st.button(
+            f"{icon}  {label}",
+            key=f"nav_{key}",
+            use_container_width=True,
+            type="primary" if is_active else "secondary"
+        ):
+            st.session_state.page = key
+            st.rerun()
+    
+    # Footer stats (minimal)
+    st.divider()
     stats = db.get_stats()
-    st.metric("Reference Files", stats['total_hashes'])
+    langs = " • ".join([f"{l}: {c}" for l, c in stats.get('by_language', {}).items()])
+    st.caption(f"📚 {stats['total_hashes']} refs | {langs}")
     
-    if stats.get('by_language'):
-        st.caption("By Language:")
-        for lang, count in stats['by_language'].items():
-            st.text(f"  {lang}: {count}")
-    
-    st.divider()
-    
-    page = st.radio(
-        "Navigation",
-        ["🆚 Compare Files", "📊 Batch Analysis", "🔍 Database Search", "💾 Database Manager", "ℹ️ How It Works"],
-        label_visibility="collapsed"
-    )
+    page = st.session_state.page
 
 
 # ============================================================================
 # COMPARE FILES PAGE
 # ============================================================================
-if page == "🆚 Compare Files":
+if page == "compare":
     st.header("🆚 Compare Two Files")
     st.caption("Upload two code files to check for similarity")
     
@@ -223,12 +243,22 @@ if page == "🆚 Compare Files":
                 with st.expander(f"🔗 Matching Patterns ({result.pattern_match_ratio})"):
                     for pattern in result.matching_patterns:
                         st.code(pattern)
-
+            
+            # Debug info
+            if result.debug_info:
+                with st.expander("🔬 Debug: Extracted Patterns"):
+                    dcol1, dcol2 = st.columns(2)
+                    with dcol1:
+                        st.caption(f"**{file1.name} ({lang1})**")
+                        st.code('\n'.join(result.debug_info.get('patterns1', [])) or 'No patterns')
+                    with dcol2:
+                        st.caption(f"**{file2.name} ({lang2})**")
+                        st.code('\n'.join(result.debug_info.get('patterns2', [])) or 'No patterns')
 
 # ============================================================================
 # BATCH ANALYSIS PAGE
 # ============================================================================
-elif page == "📊 Batch Analysis":
+elif page == "batch":
     st.header("📊 Batch Analysis")
     st.caption("Upload multiple files to find all similar pairs (e.g., check student submissions)")
     
@@ -339,7 +369,7 @@ elif page == "📊 Batch Analysis":
 # ============================================================================
 # DATABASE SEARCH PAGE
 # ============================================================================
-elif page == "🔍 Database Search":
+elif page == "search":
     st.header("🔍 Database Search")
     st.caption("Search and explore the reference code database")
     
@@ -357,28 +387,58 @@ elif page == "🔍 Database Search":
         
         threshold = st.slider("Minimum similarity", 0.0, 1.0, 0.4, 0.05, key="check_thresh")
         
+        search_method = st.radio(
+            "Search method",
+            ["Both (recommended)", "Syntactic only", "Structural only"],
+            horizontal=True
+        )
+        
         if check_file:
             code = check_file.read().decode('utf-8')
             lang = infer_language(check_file.name)
             
             st.info(f"📄 {check_file.name} [{lang}]")
             
+            with st.expander("🔬 View Extracted Patterns"):
+                patterns = hasher.debug_patterns(code, lang)
+                st.json(patterns)
+            
             if st.button("🔍 Search Database", type="primary"):
                 with st.spinner("Searching..."):
                     query_hash = hasher.hash_code(code, lang)
-                    matches = db.find_similar(query_hash, threshold=threshold, limit=20)
+                    query_patterns = hasher.debug_patterns(code, lang)['control_flow']
+                    
+                    if search_method == "Both (recommended)":
+                        matches = db.find_similar(query_hash, query_patterns, threshold=threshold)
+                    elif search_method == "Syntactic only":
+                        matches = db.find_similar_hash(query_hash, threshold=threshold)
+                    else:
+                        matches = db.find_similar_structural(query_patterns, threshold=threshold)
                 
                 if matches:
                     st.warning(f"⚠️ Found {len(matches)} potential matches!")
                     
-                    df = pd.DataFrame([{
-                        'Source': m['source'],
-                        'File': m['file_path'],
-                        'Language': m['language'],
-                        'Similarity': f"{m['similarity']:.1%}"
-                    } for m in matches])
-                    
-                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    for match in matches[:10]:
+                        with st.expander(
+                            f"**{match['file_path']}** - {match['similarity']:.1%} ({match.get('match_type', 'unknown')})"
+                        ):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.caption("Match Info")
+                                st.write(f"**Source:** {match['source']}")
+                                st.write(f"**Language:** {match['language']}")
+                                st.write(f"**Similarity:** {match['similarity']:.1%}")
+                                if 'syntactic_similarity' in match:
+                                    st.write(f"**Syntactic:** {match['syntactic_similarity']:.1%}")
+                                if 'structural_similarity' in match:
+                                    st.write(f"**Structural:** {match['structural_similarity']:.1%}")
+                                if match.get('matching_patterns'):
+                                    st.write("**Matching patterns:**")
+                                    st.code('\n'.join(match['matching_patterns']))
+                            with col2:
+                                st.caption("Reference Code")
+                                st.code(match['code'][:1000] + ('...' if len(match['code']) > 1000 else ''), 
+                                       language=match['language'])
                 else:
                     st.success("✅ No matches found - code appears original!")
     
@@ -395,7 +455,7 @@ elif page == "🔍 Database Search":
         # Filters
         st.divider()
         
-        fcol1, fcol2 = st.columns(2)
+        fcol1, fcol2, fcol3 = st.columns(3)
         with fcol1:
             lang_filter = st.selectbox(
                 "Filter by Language",
@@ -406,10 +466,12 @@ elif page == "🔍 Database Search":
                 "Filter by Source",
                 ["All"] + list(stats.get('by_source', {}).keys())
             )
+        with fcol3:
+            search_term = st.text_input("Search file name", placeholder="e.g., bubble")
         
-        # Get all entries (limited)
+        # Get all entries
         cursor = db.conn.cursor()
-        query = "SELECT source, file_path, language, created_at FROM code_hashes"
+        query = "SELECT id, source, file_path, language, code, patterns, created_at FROM code_hashes"
         conditions = []
         params = []
         
@@ -419,17 +481,44 @@ elif page == "🔍 Database Search":
         if source_filter != "All":
             conditions.append("source = ?")
             params.append(source_filter)
+        if search_term:
+            conditions.append("file_path LIKE ?")
+            params.append(f"%{search_term}%")
         
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
         
-        query += " ORDER BY created_at DESC LIMIT 100"
+        query += " ORDER BY created_at DESC LIMIT 50"
         cursor.execute(query, params)
         
         rows = cursor.fetchall()
+        
         if rows:
-            df = pd.DataFrame(rows, columns=['Source', 'File', 'Language', 'Added'])
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.caption(f"Showing {len(rows)} files")
+            
+            for row in rows:
+                record_id, source, file_path, language, code, patterns_str, created_at = row
+                patterns = patterns_str.split('|') if patterns_str else []
+                
+                with st.expander(f"📄 **{file_path}** [{language}] - {source}"):
+                    tcol1, tcol2 = st.columns([2, 1])
+                    
+                    with tcol1:
+                        st.caption("Source Code")
+                        st.code(code[:2000] + ('...' if len(code) > 2000 else ''), language=language)
+                    
+                    with tcol2:
+                        st.caption("Info")
+                        st.write(f"**Source:** {source}")
+                        st.write(f"**Language:** {language}")
+                        st.write(f"**Size:** {len(code)} chars")
+                        st.write(f"**Added:** {created_at}")
+                        
+                        st.caption("Control Flow Patterns")
+                        if patterns:
+                            st.code('\n'.join(patterns))
+                        else:
+                            st.write("No patterns")
         else:
             st.info("No entries found")
         
@@ -461,7 +550,7 @@ elif page == "🔍 Database Search":
 # ============================================================================
 # DATABASE MANAGER PAGE
 # ============================================================================
-elif page == "💾 Database Manager":
+elif page == "manager":
     st.header("💾 Database Manager")
     
     tab1, tab2, tab3 = st.tabs(["➕ Add Files", "🔄 Reload Code Bank", "🗑️ Clear Database"])
@@ -481,15 +570,24 @@ elif page == "💾 Database Manager":
             lang = infer_language(add_file.name)
             
             st.code(code[:500] + ('...' if len(code) > 500 else ''), language=lang)
+
+            patterns_info = hasher.debug_patterns(code, lang)
+            with st.expander("🔬 Patterns to be indexed"):
+                st.caption("Control flow patterns:")
+                st.code('\n'.join(patterns_info['control_flow']) or 'No patterns detected')
             
             if st.button("💾 Add to Database", type="primary"):
                 try:
                     hash_value = hasher.hash_code(code, lang)
+                    patterns = patterns_info['control_flow']
+                    
                     db.add_hash(
                         source=source,
                         file_path=add_file.name,
                         language=lang,
+                        code=code,
                         hash_value=hash_value,
+                        patterns=patterns,
                         metadata={'added_via': 'streamlit'}
                     )
                     st.success(f"✅ Added {add_file.name} to database!")
@@ -506,7 +604,6 @@ elif page == "💾 Database Manager":
         if code_bank_path.exists():
             st.info(f"📁 Code bank path: `{code_bank_path}`")
             
-            # Show what's in code_bank
             files_found = list(code_bank_path.rglob('*'))
             code_files = [f for f in files_found if f.suffix in ['.py', '.java', '.cpp', '.cc', '.c', '.h', '.hpp']]
             st.text(f"Found {len(code_files)} code files")
@@ -523,18 +620,18 @@ elif page == "💾 Database Manager":
         st.subheader("Clear Database")
         st.warning("⚠️ This will delete ALL reference hashes from the database!")
         
-        if st.button("🗑️ Clear All", type="secondary"):
-            confirm = st.checkbox("I understand this cannot be undone")
-            if confirm:
-                db.clear()
-                st.success("Database cleared!")
-                st.rerun()
+        confirm = st.checkbox("I understand this cannot be undone")
+        
+        if st.button("🗑️ Clear All", type="secondary", disabled=not confirm):
+            db.clear()
+            st.success("✅ Database cleared!")
+            st.rerun()
 
 
 # ============================================================================
 # HOW IT WORKS PAGE
 # ============================================================================
-elif page == "ℹ️ How It Works":
+elif page == "about":
     st.header("ℹ️ How It Works")
     
     st.markdown("""

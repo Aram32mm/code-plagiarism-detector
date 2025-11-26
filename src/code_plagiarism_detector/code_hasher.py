@@ -1,9 +1,9 @@
 """Code plagiarism detector using AST fingerprinting and perceptual hashing."""
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Optional
 import numpy as np
 from tree_sitter import Language, Parser
 import tree_sitter_python as tspython
@@ -26,6 +26,7 @@ class ComparisonResult:
     lang1: str
     lang2: str
     method_used: str
+    debug_info: Dict = field(default_factory=dict)
     
     def __repr__(self):
         return (
@@ -35,62 +36,151 @@ class ComparisonResult:
         )
 
 
-class CodeHasher:
-    """Generate and compare perceptual hashes of code based on AST structure."""
-    
-    LANGUAGES = {
-        'python': {'parser': tspython, 'extensions': ['.py']},
-        'java': {'parser': tsjava, 'extensions': ['.java']},
-        'cpp': {'parser': tscpp, 'extensions': ['.cpp', '.cc', '.cxx', '.c', '.h', '.hpp']}
-    }
-    
-    STRUCTURAL_NODES = {
-        'python': [
-            'function_definition', 'class_definition', 'if_statement', 
+@dataclass
+class LanguageConfig:
+    """Configuration for a programming language."""
+    parser_module: object
+    extensions: List[str]
+    structural_nodes: List[str]
+    pattern_mappings: Dict[str, List[str]]
+
+
+@dataclass
+class DetectorConfig:
+    """Configuration for detection thresholds and behavior."""
+    high_confidence_threshold: float = 0.60
+    medium_confidence_threshold: float = 0.40
+    plagiarism_threshold: float = 0.50
+    hash_bits: int = 256
+    shingle_sizes: Tuple[int, int, int] = (2, 3, 4)
+    shingle_thresholds: Tuple[int, int] = (5, 15)
+
+
+# Default language configurations
+DEFAULT_LANGUAGES: Dict[str, LanguageConfig] = {
+    'python': LanguageConfig(
+        parser_module=tspython,
+        extensions=['.py'],
+        structural_nodes=[
+            'function_definition', 'class_definition', 'if_statement',
             'for_statement', 'while_statement', 'try_statement',
-            'with_statement', 'assignment', 'comparison_operator', 'binary_operator'
+            'with_statement', 'return_statement', 'call'
         ],
-        'java': [
-            'method_declaration', 'class_declaration', 'if_statement',
-            'for_statement', 'while_statement', 'try_statement',
-            'enhanced_for_statement', 'assignment_expression', 'binary_expression'
-        ],
-        'cpp': [
-            'function_definition', 'class_specifier', 'if_statement',
-            'for_statement', 'while_statement', 'try_statement',
-            'assignment_expression', 'binary_expression'
-        ]
-    }
-    
-    # Control flow patterns for cross-language matching
-    CONTROL_FLOW_NODES = {
-        'python': {
+        pattern_mappings={
             'LOOP': ['for_statement', 'while_statement'],
             'COND': ['if_statement'],
-        },
-        'java': {
+        }
+    ),
+    'java': LanguageConfig(
+        parser_module=tsjava,
+        extensions=['.java'],
+        structural_nodes=[
+            'method_declaration', 'class_declaration', 'if_statement',
+            'for_statement', 'while_statement', 'try_statement',
+            'enhanced_for_statement', 'return_statement', 'method_invocation'
+        ],
+        pattern_mappings={
             'LOOP': ['for_statement', 'while_statement', 'enhanced_for_statement', 'do_statement'],
             'COND': ['if_statement'],
-        },
-        'cpp': {
+        }
+    ),
+    'cpp': LanguageConfig(
+        parser_module=tscpp,
+        extensions=['.cpp', '.cc', '.cxx', '.c', '.h', '.hpp'],
+        structural_nodes=[
+            'function_definition', 'class_specifier', 'if_statement',
+            'for_statement', 'while_statement', 'try_statement',
+            'return_statement', 'call_expression'
+        ],
+        pattern_mappings={
             'LOOP': ['for_statement', 'while_statement', 'for_range_loop', 'do_statement'],
             'COND': ['if_statement'],
         }
-    }
+    ),
+}
+
+
+class CodeHasher:
+    """Generate and compare perceptual hashes of code based on AST structure."""
     
-    def __init__(self):
-        """Initialize parsers for each language."""
-        self.parsers = {}
-        for lang_name, lang_config in self.LANGUAGES.items():
-            parser = Parser(Language(lang_config['parser'].language()))
+    def __init__(self,
+                 languages: Optional[Dict[str, LanguageConfig]] = None,
+                 config: Optional[DetectorConfig] = None):
+        """
+        Initialize with optional custom configurations.
+        
+        Args:
+            languages: Custom language configurations (defaults to Python/Java/C++)
+            config: Detection thresholds and parameters
+        """
+        self.languages = languages or DEFAULT_LANGUAGES.copy()
+        self.config = config or DetectorConfig()
+        
+        self.parsers: Dict[str, Parser] = {}
+        self._node_to_pattern: Dict[str, Dict[str, str]] = {}
+        
+        self._init_parsers()
+        self._build_mappings()
+    
+    def _init_parsers(self):
+        """Initialize parsers for all configured languages."""
+        for lang_name, lang_config in self.languages.items():
+            parser = Parser(Language(lang_config.parser_module.language()))
             self.parsers[lang_name] = parser
     
+    def _build_mappings(self):
+        """Build reverse node-to-pattern mappings for fast lookup."""
+        self._node_to_pattern = {}
+        
+        for lang_name, lang_config in self.languages.items():
+            self._node_to_pattern[lang_name] = {}
+            for pattern, nodes in lang_config.pattern_mappings.items():
+                for node in nodes:
+                    self._node_to_pattern[lang_name][node] = pattern
+    
+    def register_language(self, name: str, config: LanguageConfig):
+        """
+        Register a new language at runtime.
+        
+        Args:
+            name: Language identifier
+            config: Language configuration
+        """
+        self.languages[name] = config
+        parser = Parser(Language(config.parser_module.language()))
+        self.parsers[name] = parser
+        self._build_mappings()
+    
+    def update_patterns(self, language: str, patterns: Dict[str, List[str]]):
+        """
+        Update pattern mappings for a language.
+        
+        Args:
+            language: Language to update
+            patterns: New patterns to add/update
+        """
+        if language not in self.languages:
+            raise ValueError(f"Unknown language: {language}")
+        self.languages[language].pattern_mappings.update(patterns)
+        self._build_mappings()
+    
     def compare(self, code1: str, lang1: str, code2: str, lang2: str) -> ComparisonResult:
-        """Compare two code snippets and return comprehensive results."""
-        if lang1 not in self.LANGUAGES:
-            raise ValueError(f"Unsupported language: {lang1}")
-        if lang2 not in self.LANGUAGES:
-            raise ValueError(f"Unsupported language: {lang2}")
+        """
+        Compare two code snippets and return comprehensive results.
+        
+        Args:
+            code1: First code string
+            lang1: Language of first code
+            code2: Second code string
+            lang2: Language of second code
+            
+        Returns:
+            ComparisonResult with all detection metrics
+        """
+        if lang1 not in self.languages:
+            raise ValueError(f"Unsupported language: {lang1}. Available: {list(self.languages.keys())}")
+        if lang2 not in self.languages:
+            raise ValueError(f"Unsupported language: {lang2}. Available: {list(self.languages.keys())}")
         
         # Syntactic analysis (hash-based)
         hash1 = self.hash_code(code1, lang1)
@@ -99,25 +189,30 @@ class CodeHasher:
         syntactic_sim = 1.0 - (hamming_dist / len(hash1))
         
         # Structural analysis (pattern-based)
-        structural_sim, patterns, match_ratio = self._compare_structure(
+        structural_sim, patterns, match_ratio, debug = self._compare_structure(
             code1, lang1, code2, lang2
         )
         
-        # Use best result
+        # Best result
         best_sim = max(syntactic_sim, structural_sim)
         method_used = 'syntactic' if syntactic_sim >= structural_sim else 'structural'
         
-        # Confidence thresholds
-        if structural_sim >= 0.60 or best_sim >= 0.85:
+        # Confidence based on config thresholds
+        if structural_sim >= self.config.high_confidence_threshold or best_sim >= 0.85:
             confidence = 'high'
-        elif structural_sim >= 0.40 or best_sim >= 0.70:
+        elif structural_sim >= self.config.medium_confidence_threshold or best_sim >= 0.70:
             confidence = 'medium'
         else:
             confidence = 'low'
         
+        plagiarism_detected = (
+            best_sim > self.config.plagiarism_threshold or 
+            structural_sim > self.config.plagiarism_threshold
+        )
+        
         return ComparisonResult(
             similarity=best_sim,
-            plagiarism_detected=best_sim > 0.50 or structural_sim > 0.50,
+            plagiarism_detected=plagiarism_detected,
             confidence=confidence,
             syntactic_similarity=syntactic_sim,
             hamming_distance=hamming_dist,
@@ -126,7 +221,8 @@ class CodeHasher:
             pattern_match_ratio=match_ratio,
             lang1=lang1,
             lang2=lang2,
-            method_used=method_used
+            method_used=method_used,
+            debug_info=debug
         )
     
     def compare_files(self, file1: str, file2: str) -> ComparisonResult:
@@ -142,20 +238,38 @@ class CodeHasher:
         return self.compare(code1, lang1, code2, lang2)
     
     def hash_code(self, code: str, language: str) -> np.ndarray:
-        """Generate a 256-bit perceptual hash for code."""
-        if language not in self.LANGUAGES:
-            raise ValueError(f"Unsupported language: {language}. Supported: {list(self.LANGUAGES.keys())}")
+        """
+        Generate a perceptual hash for code.
+        
+        Args:
+            code: Source code string
+            language: Programming language
+            
+        Returns:
+            Hash as numpy array of bits
+        """
+        if language not in self.languages:
+            raise ValueError(f"Unsupported language: {language}")
         
         features = self._extract_features(code, language)
         normalized = self._normalize_features(features, language)
         
-        k = 2 if len(normalized) <= 5 else 3 if len(normalized) <= 15 else 4
-        shingles = self._generate_shingles(normalized, k)
+        # Adaptive shingle size
+        small_k, medium_k, large_k = self.config.shingle_sizes
+        thresh_small, thresh_large = self.config.shingle_thresholds
         
-        return self._locality_sensitive_hash(shingles)
+        if len(normalized) <= thresh_small:
+            k = small_k
+        elif len(normalized) <= thresh_large:
+            k = medium_k
+        else:
+            k = large_k
+        
+        shingles = self._generate_shingles(normalized, k)
+        return self._locality_sensitive_hash(shingles, self.config.hash_bits)
     
     def hash_file(self, file_path: str) -> np.ndarray:
-        """Generate a 256-bit hash for a code file."""
+        """Generate hash for a code file."""
         language = self._detect_language(file_path)
         with open(file_path, 'r', encoding='utf-8') as f:
             code = f.read()
@@ -171,16 +285,21 @@ class CodeHasher:
         
         return similarity, hamming_distance
     
-    def _compare_structure(self, code1: str, lang1: str, 
-                           code2: str, lang2: str) -> Tuple[float, List[str], str]:
-        """Compare structural patterns - ONLY LOOP and COND, normalized depths."""
+    def _compare_structure(self, code1: str, lang1: str,
+                           code2: str, lang2: str) -> Tuple[float, List[str], str, Dict]:
+        """Compare structural patterns with debug info."""
         patterns1 = self._extract_control_flow(code1, lang1)
         patterns2 = self._extract_control_flow(code2, lang2)
         
+        debug = {
+            'patterns1': patterns1,
+            'patterns2': patterns2,
+        }
+        
         if not patterns1 and not patterns2:
-            return 1.0, [], "0/0"
+            return 1.0, [], "0/0", debug
         if not patterns1 or not patterns2:
-            return 0.0, [], "0/0"
+            return 0.0, [], "0/0", debug
         
         # Generate shingles
         shingles1 = set(self._generate_shingles(patterns1, k=2))
@@ -189,15 +308,17 @@ class CodeHasher:
         shingles1.discard('empty')
         shingles2.discard('empty')
         
+        debug['shingles1'] = sorted(shingles1)
+        debug['shingles2'] = sorted(shingles2)
+        
         if not shingles1 or not shingles2:
-            # Fallback: direct pattern comparison
             set1 = set(patterns1)
             set2 = set(patterns2)
             intersection = set1 & set2
             union = set1 | set2
             if union:
-                return len(intersection) / len(union), sorted(list(intersection)), f"{len(intersection)}/{len(union)}"
-            return 0.0, [], "0/0"
+                return len(intersection) / len(union), sorted(list(intersection)), f"{len(intersection)}/{len(union)}", debug
+            return 0.0, [], "0/0", debug
         
         intersection = shingles1 & shingles2
         union = shingles1 | shingles2
@@ -206,38 +327,24 @@ class CodeHasher:
         patterns = sorted(list(intersection))
         ratio = f"{len(intersection)}/{len(union)}"
         
-        return similarity, patterns, ratio
+        debug['intersection'] = patterns
+        
+        return similarity, patterns, ratio, debug
     
     def _extract_control_flow(self, code: str, language: str) -> List[str]:
-        """
-        Extract ONLY loop and conditional patterns, with normalized depths.
-        
-        This strips CLASS/FUNC wrappers and focuses on algorithm structure:
-        - LOOP (for, while)
-        - COND (if)
-        
-        Depths are relative to the first control flow node found.
-        """
+        """Extract control flow patterns using language config."""
         if not code.strip():
             return []
         
         parser = self.parsers[language]
         tree = parser.parse(bytes(code, 'utf-8'))
-        mappings = self.CONTROL_FLOW_NODES.get(language, {})
-        
-        # Build reverse mapping
-        node_to_pattern = {}
-        for pattern_name, node_types in mappings.items():
-            for node_type in node_types:
-                node_to_pattern[node_type] = pattern_name
+        node_to_pattern = self._node_to_pattern.get(language, {})
         
         patterns = []
         
         def traverse(node, depth=0):
-            # Only capture LOOP and COND, ignore CLASS/FUNC
             if node.type in node_to_pattern:
                 patterns.append((node_to_pattern[node.type], depth))
-            
             for child in node.children:
                 traverse(child, depth + 1)
         
@@ -246,17 +353,14 @@ class CodeHasher:
         if not patterns:
             return []
         
-        # Normalize depths relative to FIRST control flow pattern
         min_depth = min(p[1] for p in patterns)
-        normalized = [f"{p[0]}:d{p[1] - min_depth}" for p in patterns]
-        
-        return normalized
+        return [f"{p[0]}:d{p[1] - min_depth}" for p in patterns]
     
     def _detect_language(self, file_path: str) -> str:
         """Detect language from file extension."""
         ext = Path(file_path).suffix.lower()
-        for lang, config in self.LANGUAGES.items():
-            if ext in config['extensions']:
+        for lang, config in self.languages.items():
+            if ext in config.extensions:
                 return lang
         raise ValueError(f"Unsupported file extension: {ext}")
     
@@ -268,8 +372,8 @@ class CodeHasher:
         parser = self.parsers[language]
         tree = parser.parse(bytes(code, 'utf-8'))
         
+        structural_nodes = self.languages[language].structural_nodes
         features = []
-        structural_nodes = self.STRUCTURAL_NODES[language]
         
         def traverse(node, depth=0):
             if node.type in structural_nodes:
@@ -281,18 +385,13 @@ class CodeHasher:
         return features
     
     def _normalize_features(self, features: List[str], language: str) -> List[str]:
-        """Normalize to universal patterns."""
+        """Normalize features to universal patterns."""
         if not features:
             return []
         
-        mappings = self.CONTROL_FLOW_NODES.get(language, {})
-        
-        node_to_pattern = {}
-        for pattern_name, node_types in mappings.items():
-            for node_type in node_types:
-                node_to_pattern[node_type] = pattern_name
-        
+        node_to_pattern = self._node_to_pattern.get(language, {})
         normalized = []
+        
         for feature in features:
             parts = feature.split(':')
             base_type = parts[0]
@@ -300,10 +399,7 @@ class CodeHasher:
             
             if base_type in node_to_pattern:
                 pattern = node_to_pattern[base_type]
-                if depth_part:
-                    normalized.append(f"{pattern}:{depth_part}")
-                else:
-                    normalized.append(pattern)
+                normalized.append(f"{pattern}:{depth_part}" if depth_part else pattern)
             elif depth_part:
                 normalized.append(f"{base_type}:{depth_part}")
         
@@ -346,7 +442,7 @@ class CodeHasher:
         return [' '.join(features[i:i+k]) for i in range(len(features) - k + 1)]
     
     def _locality_sensitive_hash(self, shingles: List[str], num_bits: int = 256) -> np.ndarray:
-        """Generate LSH-based 256-bit hash."""
+        """Generate LSH-based hash."""
         if not shingles or shingles == ['empty']:
             return np.zeros(num_bits, dtype=np.uint8)
         
@@ -359,8 +455,12 @@ class CodeHasher:
         
         return np.unpackbits(np.array(hash_bytes, dtype=np.uint8))
     
-    def debug_patterns(self, code: str, language: str) -> dict:
+    def debug_patterns(self, code: str, language: str) -> Dict:
         """Debug helper to see extracted patterns."""
         return {
+            'features': self._extract_features(code, language),
+            'normalized': self._normalize_features(
+                self._extract_features(code, language), language
+            ),
             'control_flow': self._extract_control_flow(code, language),
         }

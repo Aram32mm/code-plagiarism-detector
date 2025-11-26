@@ -17,39 +17,42 @@ from code_plagiarism_detector import CodeHasher, ComparisonResult
 # ============================================================================
 
 PYTHON_BUBBLE_SORT = """
-def bubble_sort(arr):
-    n = len(arr)
-    for i in range(n):
-        for j in range(0, n - i - 1):
-            if arr[j] > arr[j + 1]:
-                arr[j], arr[j + 1] = arr[j + 1], arr[j]
-    return arr
+class Solution:
+    def bubble_sort(self, arr):
+        n = len(arr)
+        for i in range(n):
+            for j in range(0, n - i - 1):
+                if arr[j] > arr[j + 1]:
+                    arr[j], arr[j + 1] = arr[j + 1], arr[j]
+        return arr
 """
 
 PYTHON_BUBBLE_SORT_RENAMED = """
-def bubble_sort(items):
-    length = len(items)
-    for x in range(length):
-        for y in range(0, length - x - 1):
-            if items[y] > items[y + 1]:
-                items[y], items[y + 1] = items[y + 1], items[y]
-    return items
+class Solution:
+    def bubble_sort(self, items):
+        length = len(items)
+        for x in range(length):
+            for y in range(0, length - x - 1):
+                if items[y] > items[y + 1]:
+                    items[y], items[y + 1] = items[y + 1], items[y]
+        return items
 """
 
 PYTHON_QUICK_SORT = """
-def quick_sort(arr):
-    if len(arr) <= 1:
-        return arr
-    pivot = arr[len(arr) // 2]
-    left = [x for x in arr if x < pivot]
-    middle = [x for x in arr if x == pivot]
-    right = [x for x in arr if x > pivot]
-    return quick_sort(left) + middle + quick_sort(right)
+class Solution:
+    def quick_sort(self, arr):
+        if len(arr) <= 1:
+            return arr
+        pivot = arr[len(arr) // 2]
+        left = [x for x in arr if x < pivot]
+        middle = [x for x in arr if x == pivot]
+        right = [x for x in arr if x > pivot]
+        return self.quick_sort(left) + middle + self.quick_sort(right)
 """
 
 JAVA_BUBBLE_SORT = """
-public class BubbleSort {
-    public static void bubbleSort(int[] arr) {
+public class Solution {
+    public void bubbleSort(int[] arr) {
         int n = arr.length;
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n - i - 1; j++) {
@@ -65,18 +68,19 @@ public class BubbleSort {
 """
 
 CPP_BUBBLE_SORT = """
-#include <vector>
-
-void bubbleSort(std::vector<int>& arr) {
-    int n = arr.size();
-    for (int i = 0; i < n; i++) {
-        for (int j = 0; j < n - i - 1; j++) {
-            if (arr[j] > arr[j + 1]) {
-                std::swap(arr[j], arr[j + 1]);
+class Solution {
+public:
+    void bubbleSort(vector<int>& arr) {
+        int n = arr.size();
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n - i - 1; j++) {
+                if (arr[j] > arr[j + 1]) {
+                    swap(arr[j], arr[j + 1]);
+                }
             }
         }
     }
-}
+};
 """
 
 
