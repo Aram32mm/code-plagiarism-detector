@@ -72,22 +72,20 @@ def infer_language(filename: str) -> str:
 
 
 def get_confidence_color(confidence: str) -> str:
-    """Get color for confidence level."""
-    return {'high': '🔴', 'medium': '🟡', 'low': '🟢'}.get(confidence, '⚪')
+    """Get emoji for confidence level."""
+    return {'high': '🔴', 'medium': '🟠', 'low': '🟢'}.get(confidence, '⚪')
 
 
 def create_similarity_gauge(value: float, title: str = "Similarity") -> go.Figure:
     """Create a gauge chart for similarity."""
     
-    # Determine color based on value
-    if value >= 0.8:
-        bar_color = "#dc3545"  # Red - high plagiarism
-    elif value >= 0.6:
-        bar_color = "#fd7e14"  # Orange
-    elif value >= 0.4:
-        bar_color = "#ffc107"  # Yellow
+    # Align with plagiarism thresholds
+    if value >= 0.70:
+        bar_color = "#dc3545"  # Red - HIGH
+    elif value >= 0.50:
+        bar_color = "#fd7e14"  # Orange - MEDIUM  
     else:
-        bar_color = "#28a745"  # Green - low plagiarism
+        bar_color = "#28a745"  # Green - LOW
     
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
@@ -100,10 +98,9 @@ def create_similarity_gauge(value: float, title: str = "Similarity") -> go.Figur
             'bgcolor': "rgba(0,0,0,0)",
             'borderwidth': 0,
             'steps': [
-                {'range': [0, 40], 'color': 'rgba(40, 167, 69, 0.3)'},   # Green
-                {'range': [40, 60], 'color': 'rgba(255, 193, 7, 0.3)'},  # Yellow
-                {'range': [60, 80], 'color': 'rgba(253, 126, 20, 0.3)'}, # Orange
-                {'range': [80, 100], 'color': 'rgba(220, 53, 69, 0.3)'} # Red
+                {'range': [0, 50], 'color': 'rgba(40, 167, 69, 0.3)'},    # Green - LOW
+                {'range': [50, 70], 'color': 'rgba(253, 126, 20, 0.3)'},  # Orange - MEDIUM
+                {'range': [70, 100], 'color': 'rgba(220, 53, 69, 0.3)'}   # Red - HIGH
             ],
         }
     ))
@@ -116,6 +113,7 @@ def create_similarity_gauge(value: float, title: str = "Similarity") -> go.Figur
     )
     
     return fig
+
 
 # Initialize
 hasher, db, loaded_count = init_detector()
@@ -246,9 +244,9 @@ if page == "compare":
                 - **Structural** works best for cross-language or rewritten plagiarism
                 
                 **Confidence levels:**
-                - 🔴 **HIGH**: ≥60% structural match - very likely plagiarism
-                - 🟡 **MEDIUM**: 40-60% match - needs review
-                - 🟢 **LOW**: <40% match - probably original
+                - 🔴 **HIGH**: ≥70% match - very likely plagiarism
+                - 🟠 **MEDIUM**: 50-70% match - needs review
+                - 🟢 **LOW**: <50% match - probably original
                 """)
             
             # Matching patterns
@@ -267,6 +265,7 @@ if page == "compare":
                     with dcol2:
                         st.caption(f"**{file2.name} ({lang2})**")
                         st.code('\n'.join(result.debug_info.get('patterns2', [])) or 'No patterns')
+
 
 # ============================================================================
 # BATCH ANALYSIS PAGE
@@ -432,8 +431,16 @@ elif page == "search":
                     st.warning(f"⚠️ Found {len(matches)} potential matches!")
                     
                     for match in matches[:10]:
+                        sim_value = match['similarity']
+                        if sim_value >= 0.70:
+                            badge = "🔴 HIGH"
+                        elif sim_value >= 0.50:
+                            badge = "🟠 MEDIUM"
+                        else:
+                            badge = "🟢 LOW"
+                        
                         with st.expander(
-                            f"**{match['file_path']}** - {match['similarity']:.1%} ({match.get('match_type', 'unknown')})"
+                            f"**{match['file_path']}** - {sim_value:.1%} {badge}"
                         ):
                             col1, col2 = st.columns(2)
                             with col1:
@@ -698,9 +705,9 @@ elif page == "about":
     
     | Level | Threshold | Meaning |
     |-------|-----------|---------|
-    | 🔴 **HIGH** | ≥60% structural | Very likely plagiarism |
-    | 🟡 **MEDIUM** | 40-60% | Needs manual review |
-    | 🟢 **LOW** | <40% | Probably original |
+    | 🔴 **HIGH** | ≥70% | Very likely plagiarism |
+    | 🟠 **MEDIUM** | 50-70% | Needs manual review |
+    | 🟢 **LOW** | <50% | Probably original |
     
     ---
     
