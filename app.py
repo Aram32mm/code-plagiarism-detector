@@ -78,31 +78,44 @@ def get_confidence_color(confidence: str) -> str:
 
 def create_similarity_gauge(value: float, title: str = "Similarity") -> go.Figure:
     """Create a gauge chart for similarity."""
+    
+    # Determine color based on value
+    if value >= 0.8:
+        bar_color = "#dc3545"  # Red - high plagiarism
+    elif value >= 0.6:
+        bar_color = "#fd7e14"  # Orange
+    elif value >= 0.4:
+        bar_color = "#ffc107"  # Yellow
+    else:
+        bar_color = "#28a745"  # Green - low plagiarism
+    
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=value * 100,
-        number={'suffix': '%', 'font': {'size': 40}},
-        title={'text': title, 'font': {'size': 16}},
+        number={'suffix': '%', 'font': {'size': 48, 'color': bar_color}},
+        title={'text': title, 'font': {'size': 18}},
         gauge={
-            'axis': {'range': [0, 100], 'tickwidth': 1},
-            'bar': {'color': "#1f77b4"},
-            'bgcolor': "white",
+            'axis': {'range': [0, 100], 'tickwidth': 2, 'tickcolor': "#666"},
+            'bar': {'color': bar_color, 'thickness': 0.75},
+            'bgcolor': "rgba(0,0,0,0)",
+            'borderwidth': 0,
             'steps': [
-                {'range': [0, 40], 'color': '#d4edda'},
-                {'range': [40, 60], 'color': '#fff3cd'},
-                {'range': [60, 80], 'color': '#ffe5b4'},
-                {'range': [80, 100], 'color': '#f8d7da'}
+                {'range': [0, 40], 'color': 'rgba(40, 167, 69, 0.3)'},   # Green
+                {'range': [40, 60], 'color': 'rgba(255, 193, 7, 0.3)'},  # Yellow
+                {'range': [60, 80], 'color': 'rgba(253, 126, 20, 0.3)'}, # Orange
+                {'range': [80, 100], 'color': 'rgba(220, 53, 69, 0.3)'} # Red
             ],
-            'threshold': {
-                'line': {'color': "red", 'width': 4},
-                'thickness': 0.75,
-                'value': 60
-            }
         }
     ))
-    fig.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20))
+    
+    fig.update_layout(
+        height=250,
+        margin=dict(l=20, r=20, t=50, b=20),
+        paper_bgcolor='rgba(0,0,0,0)',
+        font={'color': '#fff'}
+    )
+    
     return fig
-
 
 # Initialize
 hasher, db, loaded_count = init_detector()
