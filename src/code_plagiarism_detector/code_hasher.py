@@ -1,8 +1,9 @@
 """Code plagiarism detector using AST fingerprinting and perceptual hashing."""
 
 import hashlib
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple, List, Dict
+from typing import List, Tuple
 import numpy as np
 from tree_sitter import Language, Parser
 import tree_sitter_python as tspython
@@ -10,69 +11,70 @@ import tree_sitter_java as tsjava
 import tree_sitter_cpp as tscpp
 
 
+@dataclass
+class ComparisonResult:
+    """Complete plagiarism detection result."""
+    
+    similarity: float
+    plagiarism_detected: bool
+    confidence: str
+    syntactic_similarity: float
+    hamming_distance: int
+    structural_similarity: float
+    matching_patterns: List[str]
+    pattern_match_ratio: str
+    lang1: str
+    lang2: str
+    method_used: str
+    
+    def __repr__(self):
+        return (
+            f"ComparisonResult(similarity={self.similarity:.1%}, "
+            f"plagiarism={self.plagiarism_detected}, "
+            f"confidence='{self.confidence}')"
+        )
+
+
 class CodeHasher:
     """Generate and compare perceptual hashes of code based on AST structure."""
     
-    # Language configurations
     LANGUAGES = {
         'python': {'parser': tspython, 'extensions': ['.py']},
         'java': {'parser': tsjava, 'extensions': ['.java']},
         'cpp': {'parser': tscpp, 'extensions': ['.cpp', '.cc', '.cxx', '.c', '.h', '.hpp']}
     }
     
-    # AST node types for structural features
     STRUCTURAL_NODES = {
         'python': [
             'function_definition', 'class_definition', 'if_statement', 
             'for_statement', 'while_statement', 'try_statement',
-            'with_statement', 'import_statement', 'import_from_statement',
-            'assignment', 'comparison_operator', 'binary_operator'
+            'with_statement', 'assignment', 'comparison_operator', 'binary_operator'
         ],
         'java': [
             'method_declaration', 'class_declaration', 'if_statement',
             'for_statement', 'while_statement', 'try_statement',
-            'enhanced_for_statement', 'import_declaration',
-            'assignment_expression', 'binary_expression'
+            'enhanced_for_statement', 'assignment_expression', 'binary_expression'
         ],
         'cpp': [
             'function_definition', 'class_specifier', 'if_statement',
             'for_statement', 'while_statement', 'try_statement',
-            'using_declaration', 'preproc_include',
             'assignment_expression', 'binary_expression'
         ]
     }
     
-    # Universal pattern mappings for cross-language detection
-    PATTERN_MAPPINGS = {
+    # Control flow patterns for cross-language matching
+    CONTROL_FLOW_NODES = {
         'python': {
             'LOOP': ['for_statement', 'while_statement'],
-            'CONDITIONAL': ['if_statement', 'elif_clause', 'else_clause'],
-            'FUNCTION': ['function_definition'],
-            'CLASS': ['class_definition'],
-            'TRY': ['try_statement'],
-            'BINARY_OP': ['comparison_operator', 'binary_operator', 'boolean_operator'],
-            'ASSIGN': ['assignment'],
-            'CALL': ['call'],
+            'COND': ['if_statement'],
         },
         'java': {
             'LOOP': ['for_statement', 'while_statement', 'enhanced_for_statement', 'do_statement'],
-            'CONDITIONAL': ['if_statement', 'else'],
-            'FUNCTION': ['method_declaration'],
-            'CLASS': ['class_declaration'],
-            'TRY': ['try_statement', 'catch_clause'],
-            'BINARY_OP': ['binary_expression'],
-            'ASSIGN': ['assignment_expression', 'variable_declarator'],
-            'CALL': ['method_invocation'],
+            'COND': ['if_statement'],
         },
         'cpp': {
             'LOOP': ['for_statement', 'while_statement', 'for_range_loop', 'do_statement'],
-            'CONDITIONAL': ['if_statement', 'else_clause'],
-            'FUNCTION': ['function_definition'],
-            'CLASS': ['class_specifier', 'struct_specifier'],
-            'TRY': ['try_statement', 'catch_clause'],
-            'BINARY_OP': ['binary_expression'],
-            'ASSIGN': ['assignment_expression', 'init_declarator'],
-            'CALL': ['call_expression'],
+            'COND': ['if_statement'],
         }
     }
     
@@ -83,6 +85,173 @@ class CodeHasher:
             parser = Parser(Language(lang_config['parser'].language()))
             self.parsers[lang_name] = parser
     
+    def compare(self, code1: str, lang1: str, code2: str, lang2: str) -> ComparisonResult:
+        """Compare two code snippets and return comprehensive results."""
+        if lang1 not in self.LANGUAGES:
+            raise ValueError(f"Unsupported language: {lang1}")
+        if lang2 not in self.LANGUAGES:
+            raise ValueError(f"Unsupported language: {lang2}")
+        
+        # Syntactic analysis (hash-based)
+        hash1 = self.hash_code(code1, lang1)
+        hash2 = self.hash_code(code2, lang2)
+        hamming_dist = int(np.sum(hash1 != hash2))
+        syntactic_sim = 1.0 - (hamming_dist / len(hash1))
+        
+        # Structural analysis (pattern-based)
+        structural_sim, patterns, match_ratio = self._compare_structure(
+            code1, lang1, code2, lang2
+        )
+        
+        # Use best result
+        best_sim = max(syntactic_sim, structural_sim)
+        method_used = 'syntactic' if syntactic_sim >= structural_sim else 'structural'
+        
+        # Confidence thresholds
+        if structural_sim >= 0.60 or best_sim >= 0.85:
+            confidence = 'high'
+        elif structural_sim >= 0.40 or best_sim >= 0.70:
+            confidence = 'medium'
+        else:
+            confidence = 'low'
+        
+        return ComparisonResult(
+            similarity=best_sim,
+            plagiarism_detected=best_sim > 0.50 or structural_sim > 0.50,
+            confidence=confidence,
+            syntactic_similarity=syntactic_sim,
+            hamming_distance=hamming_dist,
+            structural_similarity=structural_sim,
+            matching_patterns=patterns,
+            pattern_match_ratio=match_ratio,
+            lang1=lang1,
+            lang2=lang2,
+            method_used=method_used
+        )
+    
+    def compare_files(self, file1: str, file2: str) -> ComparisonResult:
+        """Compare two code files."""
+        lang1 = self._detect_language(file1)
+        lang2 = self._detect_language(file2)
+        
+        with open(file1, 'r', encoding='utf-8') as f:
+            code1 = f.read()
+        with open(file2, 'r', encoding='utf-8') as f:
+            code2 = f.read()
+        
+        return self.compare(code1, lang1, code2, lang2)
+    
+    def hash_code(self, code: str, language: str) -> np.ndarray:
+        """Generate a 256-bit perceptual hash for code."""
+        if language not in self.LANGUAGES:
+            raise ValueError(f"Unsupported language: {language}. Supported: {list(self.LANGUAGES.keys())}")
+        
+        features = self._extract_features(code, language)
+        normalized = self._normalize_features(features, language)
+        
+        k = 2 if len(normalized) <= 5 else 3 if len(normalized) <= 15 else 4
+        shingles = self._generate_shingles(normalized, k)
+        
+        return self._locality_sensitive_hash(shingles)
+    
+    def hash_file(self, file_path: str) -> np.ndarray:
+        """Generate a 256-bit hash for a code file."""
+        language = self._detect_language(file_path)
+        with open(file_path, 'r', encoding='utf-8') as f:
+            code = f.read()
+        return self.hash_code(code, language)
+    
+    def compare_hashes(self, hash1: np.ndarray, hash2: np.ndarray) -> Tuple[float, int]:
+        """Compare two hashes using Hamming distance."""
+        if len(hash1) != len(hash2):
+            raise ValueError("Hashes must be the same length")
+        
+        hamming_distance = int(np.sum(hash1 != hash2))
+        similarity = 1.0 - (hamming_distance / len(hash1))
+        
+        return similarity, hamming_distance
+    
+    def _compare_structure(self, code1: str, lang1: str, 
+                           code2: str, lang2: str) -> Tuple[float, List[str], str]:
+        """Compare structural patterns - ONLY LOOP and COND, normalized depths."""
+        patterns1 = self._extract_control_flow(code1, lang1)
+        patterns2 = self._extract_control_flow(code2, lang2)
+        
+        if not patterns1 and not patterns2:
+            return 1.0, [], "0/0"
+        if not patterns1 or not patterns2:
+            return 0.0, [], "0/0"
+        
+        # Generate shingles
+        shingles1 = set(self._generate_shingles(patterns1, k=2))
+        shingles2 = set(self._generate_shingles(patterns2, k=2))
+        
+        shingles1.discard('empty')
+        shingles2.discard('empty')
+        
+        if not shingles1 or not shingles2:
+            # Fallback: direct pattern comparison
+            set1 = set(patterns1)
+            set2 = set(patterns2)
+            intersection = set1 & set2
+            union = set1 | set2
+            if union:
+                return len(intersection) / len(union), sorted(list(intersection)), f"{len(intersection)}/{len(union)}"
+            return 0.0, [], "0/0"
+        
+        intersection = shingles1 & shingles2
+        union = shingles1 | shingles2
+        
+        similarity = len(intersection) / len(union) if union else 0.0
+        patterns = sorted(list(intersection))
+        ratio = f"{len(intersection)}/{len(union)}"
+        
+        return similarity, patterns, ratio
+    
+    def _extract_control_flow(self, code: str, language: str) -> List[str]:
+        """
+        Extract ONLY loop and conditional patterns, with normalized depths.
+        
+        This strips CLASS/FUNC wrappers and focuses on algorithm structure:
+        - LOOP (for, while)
+        - COND (if)
+        
+        Depths are relative to the first control flow node found.
+        """
+        if not code.strip():
+            return []
+        
+        parser = self.parsers[language]
+        tree = parser.parse(bytes(code, 'utf-8'))
+        mappings = self.CONTROL_FLOW_NODES.get(language, {})
+        
+        # Build reverse mapping
+        node_to_pattern = {}
+        for pattern_name, node_types in mappings.items():
+            for node_type in node_types:
+                node_to_pattern[node_type] = pattern_name
+        
+        patterns = []
+        
+        def traverse(node, depth=0):
+            # Only capture LOOP and COND, ignore CLASS/FUNC
+            if node.type in node_to_pattern:
+                patterns.append((node_to_pattern[node.type], depth))
+            
+            for child in node.children:
+                traverse(child, depth + 1)
+        
+        traverse(tree.root_node)
+        
+        if not patterns:
+            return []
+        
+        # Normalize depths relative to FIRST control flow pattern
+        min_depth = min(p[1] for p in patterns)
+        normalized = [f"{p[0]}:d{p[1] - min_depth}" for p in patterns]
+        
+        return normalized
+    
     def _detect_language(self, file_path: str) -> str:
         """Detect language from file extension."""
         ext = Path(file_path).suffix.lower()
@@ -91,37 +260,11 @@ class CodeHasher:
                 return lang
         raise ValueError(f"Unsupported file extension: {ext}")
     
-    def _get_node_signature(self, node, depth: int) -> str:
-        """
-        Create a rich signature for a node based on its structure.
-        
-        Captures:
-        - Node type (e.g., "for_statement")
-        - Nesting depth (e.g., "d2" for nested 2 levels)
-        - Child count (e.g., "c3" for 3 children)
-        
-        This makes hashes sensitive to structure, not just presence of nodes.
-        """
-        sig_parts = [node.type]
-        
-        # Add depth for context - nested loops look different from flat loops
-        sig_parts.append(f"d{depth}")
-        
-        # Add child count to capture complexity
-        sig_parts.append(f"c{len(node.children)}")
-        
-        return ":".join(sig_parts)
-    
     def _extract_features(self, code: str, language: str) -> List[str]:
-        """
-        Extract structural features from AST with improved granularity.
+        """Extract structural features from AST."""
+        if not code.strip():
+            return []
         
-        Improvements over basic version:
-        1. Captures nesting depth (nested loops vs flat loops)
-        2. Captures node complexity (number of children)
-        3. Explicitly marks nested patterns (nested loops/conditionals)
-        4. More comprehensive node type coverage
-        """
         parser = self.parsers[language]
         tree = parser.parse(bytes(code, 'utf-8'))
         
@@ -129,24 +272,8 @@ class CodeHasher:
         structural_nodes = self.STRUCTURAL_NODES[language]
         
         def traverse(node, depth=0):
-            """Recursively traverse AST and collect structural features."""
-            
-            # Collect structural nodes with rich signatures
             if node.type in structural_nodes:
-                signature = self._get_node_signature(node, depth)
-                features.append(signature)
-            
-            # Explicitly detect nested patterns (important for algorithm detection)
-            if node.type in ['for_statement', 'while_statement', 'if_statement']:
-                # Check if this control structure contains another control structure
-                for child in node.children:
-                    if child.type in ['for_statement', 'while_statement']:
-                        # Mark nested loops as special pattern
-                        features.append(f"nested_loop:d{depth}")
-                    elif child.type == 'if_statement':
-                        features.append(f"nested_conditional:d{depth}")
-            
-            # Recurse to children with increased depth
+                features.append(f"{node.type}:d{depth}")
             for child in node.children:
                 traverse(child, depth + 1)
         
@@ -154,366 +281,86 @@ class CodeHasher:
         return features
     
     def _normalize_features(self, features: List[str], language: str) -> List[str]:
-        """
-        Normalize language-specific features to universal patterns.
+        """Normalize to universal patterns."""
+        if not features:
+            return []
         
-        Key strategy: Focus on PRIMARY CONTROL STRUCTURES only:
-        - LOOP (for, while)
-        - CONDITIONAL (if)
-        - ASSIGN (assignments)
+        mappings = self.CONTROL_FLOW_NODES.get(language, {})
         
-        Ignore: BINARY_OP (too many, create noise), CLASS, FUNCTION wrappers
+        node_to_pattern = {}
+        for pattern_name, node_types in mappings.items():
+            for node_type in node_types:
+                node_to_pattern[node_type] = pattern_name
         
-        This focuses on the ALGORITHM SKELETON.
-        """
         normalized = []
-        mappings = self.PATTERN_MAPPINGS.get(language, {})
-        
-        # First pass: normalize node types and remove child counts
         for feature in features:
-            matched = False
-            
-            # Extract parts
             parts = feature.split(':')
             base_type = parts[0]
+            depth_part = parts[1] if len(parts) > 1 else None
             
-            # Try to map to universal pattern
-            for pattern_name, node_types in mappings.items():
-                if base_type in node_types:
-                    # Keep depth but DROP child count
-                    depth_part = None
-                    for part in parts[1:]:
-                        if part.startswith('d'):
-                            depth_part = part
-                            break
-                    
-                    if depth_part:
-                        normalized.append(f"{pattern_name}:{depth_part}")
-                    else:
-                        normalized.append(pattern_name)
-                    matched = True
-                    break
-            
-            if not matched:
-                depth_part = None
-                for part in parts[1:]:
-                    if part.startswith('d'):
-                        depth_part = part
-                        break
-                
+            if base_type in node_to_pattern:
+                pattern = node_to_pattern[base_type]
                 if depth_part:
-                    normalized.append(f"{base_type}:{depth_part}")
+                    normalized.append(f"{pattern}:{depth_part}")
                 else:
-                    normalized.append(base_type)
+                    normalized.append(pattern)
+            elif depth_part:
+                normalized.append(f"{base_type}:{depth_part}")
         
-        # Second pass: Keep ONLY primary control structures
-        # These define the algorithm skeleton
-        PRIMARY_PATTERNS = ['LOOP', 'CONDITIONAL', 'ASSIGN']
-        control_flow = []
-        for feature in normalized:
-            feature_type = feature.split(':')[0]
-            if feature_type in PRIMARY_PATTERNS:
-                control_flow.append(feature)
-        
-        # Third pass: Normalize depth to relative (starting from 0)
-        depth_normalized = []
-        min_depth = float('inf')
-        
-        # Find minimum depth
-        for feature in control_flow:
-            if ':d' in feature:
-                depth_str = feature.split(':d')[1]
-                if depth_str.isdigit():
-                    depth = int(depth_str)
-                    min_depth = min(min_depth, depth)
+        if not normalized:
+            return []
         
         # Normalize depths
-        if min_depth != float('inf'):
-            for feature in control_flow:
-                if ':d' in feature:
-                    parts = feature.split(':d')
-                    if len(parts) == 2 and parts[1].isdigit():
-                        depth = int(parts[1])
-                        depth_normalized.append(f"{parts[0]}:d{depth - min_depth}")
-                    else:
-                        depth_normalized.append(feature)
-                else:
-                    depth_normalized.append(feature)
-        else:
-            depth_normalized = control_flow
+        min_depth = float('inf')
+        for f in normalized:
+            if ':d' in f:
+                try:
+                    d = int(f.split(':d')[1])
+                    min_depth = min(min_depth, d)
+                except (ValueError, IndexError):
+                    pass
         
-        return depth_normalized
+        if min_depth == float('inf'):
+            return normalized
+        
+        result = []
+        for f in normalized:
+            if ':d' in f:
+                try:
+                    parts = f.split(':d')
+                    d = int(parts[1])
+                    result.append(f"{parts[0]}:d{d - min_depth}")
+                except (ValueError, IndexError):
+                    result.append(f)
+            else:
+                result.append(f)
+        
+        return result
     
-    def _generate_shingles(self, features: List[str], k: int = 4) -> List[str]:
-        """
-        Generate k-shingles from features.
-        
-        Changed from k=3 to k=4 for better specificity.
-        
-        Why k=4?
-        - k=2: Too many false positives (short patterns match too easily)
-        - k=3: Good balance (previous default)
-        - k=4: Better specificity, fewer false matches, still catches real plagiarism
-        - k=5+: Too strict, might miss real similarities
-        
-        Example with k=4:
-        features = ['A', 'B', 'C', 'D', 'E']
-        shingles = ['A B C D', 'B C D E']
-        
-        This captures longer sequences = more unique fingerprints.
-        """
+    def _generate_shingles(self, features: List[str], k: int = 3) -> List[str]:
+        """Generate k-shingles from features."""
         if not features:
             return ['empty']
-        
         if len(features) < k:
-            return [' '.join(features)]
-        
-        shingles = []
-        for i in range(len(features) - k + 1):
-            shingle = ' '.join(features[i:i+k])
-            shingles.append(shingle)
-        
-        return shingles if shingles else ['empty']
+            return [' '.join(features)] if features else ['empty']
+        return [' '.join(features[i:i+k]) for i in range(len(features) - k + 1)]
     
     def _locality_sensitive_hash(self, shingles: List[str], num_bits: int = 256) -> np.ndarray:
-        """
-        Generate LSH-based perceptual hash with improved distribution.
-        
-        Improvements:
-        1. Uses 64 hash functions instead of 32 (better distribution)
-        2. Each produces 4 bits instead of 8 (more granularity)
-        3. Uses SHA-256 instead of MD5 (better collision resistance)
-        4. Handles empty/small inputs gracefully
-        
-        Why more hash functions?
-        - More varied hash values across the 256 bits
-        - Better collision resistance
-        - More accurate similarity scores
-        
-        Result: More accurate cross-language detection
-        """
-        # Handle edge case: empty code
+        """Generate LSH-based 256-bit hash."""
         if not shingles or shingles == ['empty']:
             return np.zeros(num_bits, dtype=np.uint8)
         
-        # Use more hash functions for better distribution
-        # 64 functions × 4 bits = 256 bits total
-        num_hashes = num_bits // 4
-        hash_bits = []
+        hash_bytes = []
+        for i in range(num_bits // 8):
+            h = hashlib.sha256(f"salt{i}".encode())
+            for s in shingles:
+                h.update(s.encode())
+            hash_bytes.append(h.digest()[0])
         
-        for i in range(num_hashes):
-            # Use SHA-256 with different hash families for better distribution
-            hash_family = hashlib.sha256(f"family{i % 8}".encode())
-            
-            # Hash all shingles together
-            for shingle in shingles:
-                hash_family.update(shingle.encode())
-            
-            # Extract 4 bits from this hash
-            digest = hash_family.digest()
-            for byte_idx in range(min(4, len(digest))):
-                if len(hash_bits) < num_bits // 8:
-                    byte_val = digest[byte_idx]
-                    hash_bits.append(byte_val)
-        
-        # Convert to binary array
-        hash_array = np.array(hash_bits[:num_bits // 8], dtype=np.uint8)
-        binary_hash = np.unpackbits(hash_array)[:num_bits]
-        
-        return binary_hash
+        return np.unpackbits(np.array(hash_bytes, dtype=np.uint8))
     
-    def hash_code(self, code: str, language: str) -> np.ndarray:
-        """
-        Generate a 256-bit perceptual hash for code.
-        
-        Process:
-        1. Parse code to AST
-        2. Extract structural features (with depth, complexity)
-        3. Normalize to universal patterns (for cross-language)
-        4. Generate k-shingles (k=4 for specificity)
-        5. Create LSH hash (64 functions for accuracy)
-        
-        Args:
-            code: Source code string
-            language: Programming language ('python', 'java', 'cpp')
-            
-        Returns:
-            256-bit hash as numpy array
-        """
-        if language not in self.LANGUAGES:
-            raise ValueError(f"Unsupported language: {language}. Supported: {list(self.LANGUAGES.keys())}")
-        
-        # Step 1: Extract structural features
-        features = self._extract_features(code, language)
-        
-        # Step 2: Normalize for cross-language detection
-        normalized_features = self._normalize_features(features, language)
-        
-        # Step 3: Generate shingles with adaptive k
-        # Smaller k for fewer features (post-normalization)
-        if len(normalized_features) <= 5:
-            k = 2  # Very small feature set
-        elif len(normalized_features) <= 15:
-            k = 3  # Small-medium feature set
-        else:
-            k = 4  # Large feature set
-        
-        shingles = self._generate_shingles(normalized_features, k=k)
-        
-        # Step 4: Generate perceptual hash (64 hash functions)
-        code_hash = self._locality_sensitive_hash(shingles)
-        
-        return code_hash
-    
-    def hash_file(self, file_path: str) -> np.ndarray:
-        """
-        Generate a 256-bit hash for a code file.
-        
-        Args:
-            file_path: Path to source code file
-            
-        Returns:
-            256-bit hash as numpy array
-        """
-        # Detect language from extension
-        language = self._detect_language(file_path)
-        
-        # Read file
-        with open(file_path, 'r', encoding='utf-8') as f:
-            code = f.read()
-        
-        return self.hash_code(code, language)
-    
-    def compare_syntactic(self, hash1: np.ndarray, hash2: np.ndarray) -> Tuple[float, int]:
-        """
-        Compare two code hashes based on syntactic similarity.
-        
-        Focuses on SYNTACTIC similarity by comparing perceptual hashes using
-        Hamming distance. Captures code structure, formatting patterns, and
-        language-specific idioms.
-        
-        Best for:
-        - Same-language comparisons
-        - Fast database lookups
-        - Detecting renamed variables
-        - Syntactic copying detection
-        - Scalable to large codebases
-        
-        Args:
-            hash1: First 256-bit hash
-            hash2: Second 256-bit hash
-            
-        Returns:
-            Tuple of (similarity_score, hamming_distance)
-            - similarity_score: 0.0 to 1.0 (1.0 = identical)
-            - hamming_distance: Number of differing bits (0-256)
-            
-        Example:
-            >>> # Fast syntactic comparison
-            >>> hash1 = hasher.hash_file('student1.py')
-            >>> hash2 = hasher.hash_file('student2.py')
-            >>> similarity, distance = hasher.compare_syntactic(hash1, hash2)
-            >>> print(f"Syntactic similarity: {similarity:.2%}")
-        """
-        if len(hash1) != len(hash2):
-            raise ValueError("Hashes must be the same length")
-        
-        # Calculate Hamming distance
-        hamming_distance = np.sum(hash1 != hash2)
-        
-        # Convert to similarity score (0.0 to 1.0)
-        similarity = 1.0 - (hamming_distance / len(hash1))
-        
-        return similarity, int(hamming_distance)
-    
-    # Alias for backward compatibility
-    def compare(self, hash1: np.ndarray, hash2: np.ndarray) -> Tuple[float, int]:
-        """
-        Alias for compare_syntactic(). Use compare_syntactic() instead.
-        
-        This method is kept for backward compatibility but compare_syntactic()
-        better describes what this method does: syntactic/hash-based comparison.
-        """
-        return self.compare_syntactic(hash1, hash2)
-    
-    def compare_structural(self, code1: str, lang1: str, 
-                          code2: str, lang2: str) -> Tuple[float, Dict]:
-        """
-        Compare code based on algorithm structure and control flow patterns.
-        
-        Focuses on SEMANTIC similarity by analyzing:
-        - Control flow structures (loops, conditionals)
-        - Nesting patterns
-        - Algorithm skeleton
-        
-        Uses Jaccard similarity on normalized control flow shingles.
-        Works across different languages and with different syntax styles.
-        
-        Best for:
-        - Detecting same algorithm in different languages
-        - Finding structural/algorithmic plagiarism
-        - Explainable results (shows matching patterns)
-        - Semantic similarity regardless of syntax
-        
-        Args:
-            code1: First code string
-            lang1: First language ('python', 'java', 'cpp')
-            code2: Second code string
-            lang2: Second language ('python', 'java', 'cpp')
-            
-        Returns:
-            Tuple of (similarity, details_dict)
-            - similarity: 0.0 to 1.0 Jaccard similarity
-            - details: Dict with matching_shingles, total_shingles, etc.
-            
-        Example:
-            >>> # Detect algorithm-level similarity
-            >>> similarity, details = hasher.compare_structural(
-            ...     python_code, 'python',
-            ...     java_code, 'java'
-            ... )
-            >>> print(f"Structural similarity: {similarity:.2%}")
-            >>> print(f"Matching patterns: {details['matching_shingle_list']}")
-        """
-        # Extract and normalize features
-        features1 = self._extract_features(code1, lang1)
-        features2 = self._extract_features(code2, lang2)
-        
-        norm1 = self._normalize_features(features1, lang1)
-        norm2 = self._normalize_features(features2, lang2)
-        
-        # Generate shingles with appropriate k
-        k = 2 if len(norm1) <= 5 or len(norm2) <= 5 else 3
-        
-        shingles1_list = self._generate_shingles(norm1, k=k)
-        shingles2_list = self._generate_shingles(norm2, k=k)
-        
-        # Convert to sets for Jaccard calculation
-        shingles1 = set(shingles1_list)
-        shingles2 = set(shingles2_list)
-        
-        # Calculate Jaccard similarity
-        intersection = shingles1 & shingles2
-        union = shingles1 | shingles2
-        
-        jaccard = len(intersection) / len(union) if union else 0.0
-        
-        return jaccard, {
-            'matching_shingles': len(intersection),
-            'total_shingles': len(union),
-            'shingles1_count': len(shingles1),
-            'shingles2_count': len(shingles2),
-            'matching_shingle_list': sorted(list(intersection)),
-            'k_value': k
+    def debug_patterns(self, code: str, language: str) -> dict:
+        """Debug helper to see extracted patterns."""
+        return {
+            'control_flow': self._extract_control_flow(code, language),
         }
-    
-    # Alias for backward compatibility
-    def compare_cross_language(self, code1: str, lang1: str, 
-                               code2: str, lang2: str) -> Tuple[float, Dict]:
-        """
-        Alias for compare_structural(). Use compare_structural() instead.
-        
-        This method is kept for backward compatibility but compare_structural()
-        better describes what this method does: structural/algorithmic comparison.
-        """
-        return self.compare_structural(code1, lang1, code2, lang2)
