@@ -414,7 +414,7 @@ elif page == "search":
             st.info(f"📄 {check_file.name} [{lang}]")
             
             # View code expander
-            with st.expander("📄 View Code"):
+            with st.expander("View Code"):
                 st.code(code[:3000] + ('...' if len(code) > 3000 else ''), language=lang)
             
             # Debug patterns - aligned with Compare Files style
@@ -461,7 +461,7 @@ elif page == "search":
                             
                             # Patterns side by side - like Compare Files
                             st.divider()
-                            st.caption("🔬 Debug: Extracted Patterns")
+                            st.caption("Extracted Patterns")
                             pcol1, pcol2 = st.columns(2)
                             
                             with pcol1:
