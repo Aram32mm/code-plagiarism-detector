@@ -398,7 +398,8 @@ elif page == "search":
             key="check_file"
         )
         
-        threshold = st.slider("Minimum similarity", 0.0, 1.0, 0.4, 0.05, key="check_thresh")
+        threshold = st.slider("Minimum similarity", 0, 100, 40, 5, key="check_thresh", format="%d%%")
+        threshold = threshold / 100
         
         search_method = st.radio(
             "Search method",
@@ -412,14 +413,19 @@ elif page == "search":
             
             st.info(f"📄 {check_file.name} [{lang}]")
             
-            with st.expander("🔬 View Extracted Patterns"):
-                patterns = hasher.debug_patterns(code, lang)
-                st.json(patterns)
+            # View code expander
+            with st.expander("📄 View Code"):
+                st.code(code[:3000] + ('...' if len(code) > 3000 else ''), language=lang)
+            
+            # Debug patterns - aligned with Compare Files style
+            query_patterns = hasher.debug_patterns(code, lang)['control_flow']
+            with st.expander("🔬 Debug: Extracted Patterns"):
+                st.caption(f"**{check_file.name} ({lang})**")
+                st.code('\n'.join(query_patterns) or 'No patterns')
             
             if st.button("🔍 Search Database", type="primary"):
                 with st.spinner("Searching..."):
                     query_hash = hasher.hash_code(code, lang)
-                    query_patterns = hasher.debug_patterns(code, lang)['control_flow']
                     
                     if search_method == "Both (recommended)":
                         matches = db.find_similar(query_hash, query_patterns, threshold=threshold)
@@ -440,26 +446,39 @@ elif page == "search":
                         else:
                             badge = "🟢 LOW"
                         
-                        with st.expander(
-                            f"**{match['file_path']}** - {sim_value:.1%} {badge}"
-                        ):
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.caption("Match Info")
-                                st.write(f"**Source:** {match['source']}")
-                                st.write(f"**Language:** {match['language']}")
-                                st.write(f"**Similarity:** {match['similarity']:.1%}")
-                                if 'syntactic_similarity' in match:
-                                    st.write(f"**Syntactic:** {match['syntactic_similarity']:.1%}")
-                                if 'structural_similarity' in match:
-                                    st.write(f"**Structural:** {match['structural_similarity']:.1%}")
-                                if match.get('matching_patterns'):
-                                    st.write("**Matching patterns:**")
-                                    st.code('\n'.join(match['matching_patterns']))
-                            with col2:
-                                st.caption("Reference Code")
-                                st.code(match['code'][:1000] + ('...' if len(match['code']) > 1000 else ''), 
+                        with st.expander(f"**{match['file_path']}** - {sim_value:.1%} {badge}"):
+                            # Code side by side
+                            mcol1, mcol2 = st.columns(2)
+                            
+                            with mcol1:
+                                st.caption("📄 Your Code")
+                                st.code(code[:800] + ('...' if len(code) > 800 else ''), language=lang)
+                            
+                            with mcol2:
+                                st.caption("📄 Reference Code")
+                                st.code(match['code'][:800] + ('...' if len(match['code']) > 800 else ''), 
                                        language=match['language'])
+                            
+                            # Patterns side by side - like Compare Files
+                            st.divider()
+                            st.caption("🔬 Debug: Extracted Patterns")
+                            pcol1, pcol2 = st.columns(2)
+                            
+                            with pcol1:
+                                st.caption(f"**{check_file.name} ({lang})**")
+                                st.code('\n'.join(query_patterns) or 'No patterns')
+                            
+                            with pcol2:
+                                ref_patterns = match.get('patterns', [])
+                                st.caption(f"**{match['file_path']} ({match['language']})**")
+                                st.code('\n'.join(ref_patterns) if ref_patterns else 'No patterns')
+                            
+                            # Metrics
+                            st.divider()
+                            scol1, scol2, scol3 = st.columns(3)
+                            scol1.metric("Similarity", f"{match['similarity']:.1%}")
+                            scol2.metric("Syntactic", f"{match.get('syntactic_similarity', 0):.1%}")
+                            scol3.metric("Structural", f"{match.get('structural_similarity', 0):.1%}")
                 else:
                     st.success("✅ No matches found - code appears original!")
     
