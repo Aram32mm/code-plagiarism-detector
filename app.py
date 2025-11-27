@@ -233,7 +233,7 @@ if page == "compare":
                 
                 | Metric | Value | Meaning |
                 |--------|-------|---------|
-                | Syntactic | {result.syntactic_similarity:.1%} | Code structure hash comparison (catches renamed variables) |
+                | Syntactic | {result.syntactic_similarity:.1%} | Code structure hash comparison (catches same-language plagiarism) |
                 | Structural | {result.structural_similarity:.1%} | Algorithm pattern comparison (catches cross-language plagiarism) |
                 | **Final Score** | **{result.similarity:.1%}** | Maximum of both methods |
                 
@@ -283,7 +283,8 @@ elif page == "batch":
     if files and len(files) >= 2:
         st.info(f"📁 {len(files)} files uploaded - will compare {len(files) * (len(files)-1) // 2} pairs")
         
-        threshold = st.slider("Minimum similarity to report", 0.0, 1.0, 0.5, 0.05, format="%.0f%%")
+        threshold = st.slider("Minimum similarity to report", 0, 100, 50, 5, format="%d%%")
+        threshold = threshold / 100
         
         if st.button("🔍 Analyze All Pairs", type="primary"):
             # Load all files
@@ -671,7 +672,7 @@ elif page == "manager":
         if 'clear_success' in st.session_state:
             st.success(st.session_state['clear_success'])
             del st.session_state['clear_success']
-            
+
 
 # ============================================================================
 # HOW IT WORKS PAGE
