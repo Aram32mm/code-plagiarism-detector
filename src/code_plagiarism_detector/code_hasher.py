@@ -332,7 +332,12 @@ class CodeHasher:
         return similarity, patterns, ratio, debug
     
     def _extract_control_flow(self, code: str, language: str) -> List[str]:
-        """Extract control flow patterns using language config."""
+        """
+        Extract control flow patterns with proper nesting depth.
+        
+        Depth is relative to control flow ancestors only, not AST depth.
+        This captures the actual nesting structure of the algorithm.
+        """
         if not code.strip():
             return []
         
@@ -342,11 +347,20 @@ class CodeHasher:
         
         patterns = []
         
-        def traverse(node, depth=0):
-            if node.type in node_to_pattern:
-                patterns.append((node_to_pattern[node.type], depth))
+        def traverse(node, control_depth=0):
+            """
+            control_depth: number of control flow ancestors
+            """
+            is_control = node.type in node_to_pattern
+            
+            if is_control:
+                patterns.append((node_to_pattern[node.type], control_depth))
+            
             for child in node.children:
-                traverse(child, depth + 1)
+                if is_control:
+                    traverse(child, control_depth + 1)
+                else:
+                    traverse(child, control_depth)
         
         traverse(tree.root_node)
         
@@ -355,7 +369,7 @@ class CodeHasher:
         
         min_depth = min(p[1] for p in patterns)
         return [f"{p[0]}:d{p[1] - min_depth}" for p in patterns]
-    
+
     def _detect_language(self, file_path: str) -> str:
         """Detect language from file extension."""
         ext = Path(file_path).suffix.lower()
