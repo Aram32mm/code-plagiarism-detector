@@ -610,10 +610,15 @@ elif page == "manager":
                         patterns=patterns,
                         metadata={'added_via': 'streamlit'}
                     )
-                    st.success(f"✅ Added {add_file.name} to database!")
+                    st.session_state['add_success'] = f"✅ Added {add_file.name} to database!"
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"❌ Error adding file: {e}")
+        
+        # Show success message after rerun
+        if 'add_success' in st.session_state:
+            st.success(st.session_state['add_success'])
+            del st.session_state['add_success']
     
     with tab2:
         st.subheader("Reload Code Bank")
@@ -629,24 +634,44 @@ elif page == "manager":
             st.text(f"Found {len(code_files)} code files")
             
             if st.button("🔄 Reload All", type="primary"):
-                with st.spinner("Reloading..."):
-                    loaded = load_code_bank(str(code_bank_path), hasher, db, force_reload=True)
-                st.success(f"✅ Reloaded {loaded} files!")
-                st.rerun()
+                try:
+                    with st.spinner("Reloading..."):
+                        loaded = load_code_bank(str(code_bank_path), hasher, db, force_reload=True)
+                    st.session_state['reload_success'] = f"✅ Reloaded {loaded} files!"
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error reloading: {e}")
         else:
-            st.warning(f"Code bank folder not found: `{code_bank_path}`")
+            st.warning(f"⚠️ Code bank folder not found: `{code_bank_path}`")
+        
+        # Show success message after rerun
+        if 'reload_success' in st.session_state:
+            st.success(st.session_state['reload_success'])
+            del st.session_state['reload_success']
     
     with tab3:
         st.subheader("Clear Database")
         st.warning("⚠️ This will delete ALL reference hashes from the database!")
         
+        # Show current count
+        stats = db.get_stats()
+        st.info(f"📊 Current database has {stats['total_hashes']} files")
+        
         confirm = st.checkbox("I understand this cannot be undone")
         
         if st.button("🗑️ Clear All", type="secondary", disabled=not confirm):
-            db.clear()
-            st.success("✅ Database cleared!")
-            st.rerun()
-
+            try:
+                db.clear()
+                st.session_state['clear_success'] = "✅ Database cleared successfully!"
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error clearing database: {e}")
+        
+        # Show success message after rerun
+        if 'clear_success' in st.session_state:
+            st.success(st.session_state['clear_success'])
+            del st.session_state['clear_success']
+            
 
 # ============================================================================
 # HOW IT WORKS PAGE
