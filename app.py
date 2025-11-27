@@ -79,7 +79,7 @@ def get_confidence_color(confidence: str) -> str:
 def create_similarity_gauge(value: float, title: str = "Similarity") -> go.Figure:
     """Create a gauge chart for similarity."""
     
-    # Align with plagiarism thresholds
+    # Align with plagiarism thresholds (60% / 80%)
     if value >= 0.80:
         bar_color = "#dc3545"  # Red - HIGH
     elif value >= 0.60:
@@ -244,9 +244,9 @@ if page == "compare":
                 - **Structural** works best for cross-language or rewritten plagiarism
                 
                 **Confidence levels:**
-                - 🔴 **HIGH**: ≥70% match - very likely plagiarism
-                - 🟠 **MEDIUM**: 50-70% match - needs review
-                - 🟢 **LOW**: <50% match - probably original
+                - 🔴 **HIGH**: ≥80% match - very likely plagiarism
+                - 🟠 **MEDIUM**: 60-80% match - needs review
+                - 🟢 **LOW**: <60% match - probably original
                 """)
             
             # Matching patterns
@@ -283,7 +283,7 @@ elif page == "batch":
     if files and len(files) >= 2:
         st.info(f"📁 {len(files)} files uploaded - will compare {len(files) * (len(files)-1) // 2} pairs")
         
-        threshold = st.slider("Minimum similarity to report", 0, 100, 50, 5, format="%d%%")
+        threshold = st.slider("Minimum similarity to report", 0, 100, 60, 5, format="%d%%")
         threshold = threshold / 100
         
         if st.button("🔍 Analyze All Pairs", type="primary"):
@@ -439,9 +439,9 @@ elif page == "search":
                     
                     for match in matches[:10]:
                         sim_value = match['similarity']
-                        if sim_value >= 0.70:
+                        if sim_value >= 0.80:
                             badge = "🔴 HIGH"
-                        elif sim_value >= 0.50:
+                        elif sim_value >= 0.60:
                             badge = "🟠 MEDIUM"
                         else:
                             badge = "🟢 LOW"
@@ -750,9 +750,9 @@ elif page == "about":
     
     | Level | Threshold | Meaning |
     |-------|-----------|---------|
-    | 🔴 **HIGH** | ≥70% | Very likely plagiarism |
-    | 🟠 **MEDIUM** | 50-70% | Needs manual review |
-    | 🟢 **LOW** | <50% | Probably original |
+    | 🔴 **HIGH** | ≥80% | Very likely plagiarism |
+    | 🟠 **MEDIUM** | 60-80% | Needs manual review |
+    | 🟢 **LOW** | <60% | Probably original |
     
     ---
     
