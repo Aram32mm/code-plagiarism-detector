@@ -197,17 +197,17 @@ class CodeHasher:
         best_sim = max(syntactic_sim, structural_sim)
         method_used = 'syntactic' if syntactic_sim >= structural_sim else 'structural'
         
-        # Confidence based on config thresholds - ALIGNED WITH UI
-        if structural_sim >= 0.80 or best_sim >= 0.90:
+        # Confidence based on config thresholds
+        if structural_sim >= self.config.high_confidence_threshold or best_sim >= 0.90:
             confidence = 'high'
-        elif structural_sim >= 0.60 or best_sim >= 0.75:
+        elif structural_sim >= self.config.medium_confidence_threshold or best_sim >= 0.75:
             confidence = 'medium'
         else:
             confidence = 'low'
         
         plagiarism_detected = (
-            best_sim > 0.60 or 
-            structural_sim > 0.60
+            best_sim > self.config.plagiarism_threshold or 
+            structural_sim > self.config.plagiarism_threshold
         )
         
         return ComparisonResult(
@@ -331,12 +331,16 @@ class CodeHasher:
         
         return similarity, patterns, ratio, debug
     
+    # Passthrough nodes - don't increment depth for else-if chains
+    PASSTHROUGH_NODES = {'else_clause', 'else_statement'}
+    
     def _extract_control_flow(self, code: str, language: str) -> List[str]:
         """
-        Extract control flow patterns with proper nesting depth.
+        Extract control flow patterns using language config.
         
-        Depth is relative to control flow ancestors only, not AST depth.
-        This captures the actual nesting structure of the algorithm.
+        Properly handles:
+        - else-if chains (same depth) vs nested-if (different depth)
+        - Cross-language compatibility (C++, Python, Java)
         """
         if not code.strip():
             return []
@@ -347,20 +351,50 @@ class CodeHasher:
         
         patterns = []
         
-        def traverse(node, control_depth=0):
-            """
-            control_depth: number of control flow ancestors
-            """
+        def traverse(node, control_depth=0, after_else=False):
             is_control = node.type in node_to_pattern
+            is_passthrough = node.type in self.PASSTHROUGH_NODES
+            is_elif = node.type == 'elif_clause'
             
-            if is_control:
+            # Java: if_statement directly after else token stays at same depth
+            if after_else and node.type == 'if_statement':
+                patterns.append(('COND', control_depth))
+                process_children(node, control_depth)
+                return
+            
+            # Python: elif_clause is a COND at same depth as parent if
+            if is_elif:
+                patterns.append(('COND', control_depth))
+                for child in node.children:
+                    traverse(child, control_depth + 1, after_else=False)
+            elif is_control:
                 patterns.append((node_to_pattern[node.type], control_depth))
-            
-            for child in node.children:
-                if is_control:
-                    traverse(child, control_depth + 1)
+                process_children(node, control_depth)
+            elif is_passthrough:
+                # C++: else_clause - children stay at same depth
+                for child in node.children:
+                    traverse(child, control_depth, after_else=False)
+            else:
+                for child in node.children:
+                    traverse(child, control_depth, after_else=False)
+        
+        def process_children(node, control_depth):
+            """Process children of a control node, handling else-if chains."""
+            children = list(node.children)
+            for i, child in enumerate(children):
+                # Check if this child is an "else" token
+                if child.type == 'else':
+                    # Next child (if it's if_statement) should stay at same depth
+                    continue  # Skip the else token itself
+                
+                # C++ else_clause / Python elif_clause - keep at same depth  
+                if child.type in self.PASSTHROUGH_NODES or child.type == 'elif_clause':
+                    traverse(child, control_depth, after_else=False)
+                # Java: if_statement right after else token
+                elif child.type == 'if_statement' and i > 0 and children[i-1].type == 'else':
+                    traverse(child, control_depth, after_else=True)
                 else:
-                    traverse(child, control_depth)
+                    traverse(child, control_depth + 1, after_else=False)
         
         traverse(tree.root_node)
         
@@ -369,7 +403,7 @@ class CodeHasher:
         
         min_depth = min(p[1] for p in patterns)
         return [f"{p[0]}:d{p[1] - min_depth}" for p in patterns]
-
+    
     def _detect_language(self, file_path: str) -> str:
         """Detect language from file extension."""
         ext = Path(file_path).suffix.lower()
